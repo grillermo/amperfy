@@ -3076,15 +3076,15 @@
 				CODE_SIGN_ENTITLEMENTS = Amperfy/Amperfy.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				INFOPLIST_FILE = Amperfy/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.1;
-				"MARKETING_VERSION[sdk=macosx*]" = 2.1.1;
+				MARKETING_VERSION = 2.1.2;
+				"MARKETING_VERSION[sdk=macosx*]" = 2.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = me.chiq.amperfy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -3115,15 +3115,15 @@
 				CODE_SIGN_ENTITLEMENTS = Amperfy/Amperfy.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				INFOPLIST_FILE = Amperfy/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.1;
-				"MARKETING_VERSION[sdk=macosx*]" = 2.1.1;
+				MARKETING_VERSION = 2.1.2;
+				"MARKETING_VERSION[sdk=macosx*]" = 2.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = me.chiq.amperfy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
