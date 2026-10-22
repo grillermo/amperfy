@@ -35,6 +35,7 @@ B = IpaBuilder
 REPO_ROOT   = B::REPO_ROOT
 PBXPROJ_REL = "Amperfy.xcodeproj/project.pbxproj"
 REMOTE      = "github"
+BRANCH      = "master" # upstream's default branch
 
 PINNED_MANIFEST = "amperfy-manifest.plist"
 PINNED_INSTALL  = "amperfy-install.html"
@@ -72,7 +73,7 @@ NOTES   = take_option(ARGV, "--note", "-n").map { |n| n.strip.sub(/\A[-*•]\s*/
 Uploader.check_publish_dir!
 
 branch = `git -C #{REPO_ROOT.shellescape} rev-parse --abbrev-ref HEAD`.strip
-B.die("on branch '#{branch}', not 'main'; releases are cut from main") unless branch == "main"
+B.die("on branch '#{branch}', not '#{BRANCH}'; releases are cut from #{BRANCH}") unless branch == BRANCH
 
 dirty = `git -C #{REPO_ROOT.shellescape} status --porcelain`
 B.die("working tree is dirty -- commit or stash before releasing:\n#{dirty}") unless dirty.strip.empty?
@@ -200,7 +201,7 @@ B.run("git add #{PBXPROJ_REL.shellescape}", chdir: REPO_ROOT)
 B.run("git commit -m #{"Release Amperfy OTA #{tag}\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>".shellescape}", chdir: REPO_ROOT)
 committed = true
 B.run("git tag #{tag.shellescape}", chdir: REPO_ROOT)
-B.run("git push #{REMOTE} main --tags", chdir: REPO_ROOT)
+B.run("git push #{REMOTE} #{BRANCH} --tags", chdir: REPO_ROOT)
 
 puts B.green("\n✓ Published #{B::APP_NAME} OTA #{version}")
 puts B.bold("\n    Install from Safari on the device:\n    #{INSTALL_URL}")
