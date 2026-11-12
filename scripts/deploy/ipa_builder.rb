@@ -246,20 +246,28 @@ module IpaBuilder
     File.join(`getconf DARWIN_USER_CACHE_DIR`.strip, "com.apple.DeveloperTools"),
   ].map { |d| File.expand_path(d) }.freeze
 
-  def shared_cache_entries
+  # When this run started. ../../build-ios.sh sets AMPERFY_RUN_STARTED before
+  # its own xcodebuild calls (they create caches too); otherwise it is now.
+  RUN_STARTED = Time.at((ENV["#{ENV_PREFIX}_RUN_STARTED"] || Time.now.to_i).to_i)
+
+  # Entries in SHARED_CACHE_DIRS created since RUN_STARTED.
+  def shared_cache_entries_added
     SHARED_CACHE_DIRS.flat_map do |dir|
-      Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH).reject { |p| p.end_with?("/.", "/..") }
+      Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH).select do |path|
+        !path.end_with?("/.", "/..") && File.lstat(path).birthtime >= RUN_STARTED
+      rescue SystemCallError, NotImplementedError
+        false
+      end
     end
   end
 
   # Called from ../../deploy's at_exit, so it runs on success, failure and
-  # Ctrl-C alike. Removes the work dir and whatever the build added to
+  # Ctrl-C alike. Removes the work dir and whatever this run created in
   # SHARED_CACHE_DIRS (the next run fetches or rebuilds it again).
   def clean_up!
     FileUtils.rm_rf(WORK_ROOT)
-    return unless @shared_before
 
-    added = shared_cache_entries - @shared_before
+    added = shared_cache_entries_added
     # Deepest first, so a new directory is empty by the time it is removed.
     added.sort_by { |p| -p.count("/") }.each do |path|
       File.directory?(path) && !File.symlink?(path) ? Dir.rmdir(path) : FileUtils.rm_f(path)
@@ -285,7 +293,6 @@ module IpaBuilder
     ENV["DEVELOPER_DIR"] = resolve_developer_dir
     puts "    DEVELOPER_DIR=#{ENV['DEVELOPER_DIR']}"
 
-    @shared_before ||= shared_cache_entries
     FileUtils.mkdir_p(WORK_ROOT)
     work    = Dir.mktmpdir("#{APP_NAME}-ipa-", WORK_ROOT)
     archive = File.join(work, "#{APP_NAME}.xcarchive")

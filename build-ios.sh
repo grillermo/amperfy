@@ -17,6 +17,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+# Before any xcodebuild call: ./deploy deletes what was created in Xcode's and
+# SwiftPM's shared caches since this moment (IpaBuilder.clean_up!).
+AMPERFY_RUN_STARTED="$(date +%s)"
+export AMPERFY_RUN_STARTED
+
 # xcode-select may point at the Command Line Tools; xcodebuild needs full Xcode.
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 

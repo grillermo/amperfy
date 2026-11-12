@@ -130,6 +130,10 @@ NOTES   = take_option(ARGV, "--note", "--notes", "-n")
 
 # --- preflight ---------------------------------------------------------------
 
+# First of all, so every way out -- a failed check, a failed build, Ctrl-C --
+# deletes build/ and the caches this run created (IpaBuilder.clean_up!).
+at_exit { B.clean_up! }
+
 if DEVLOG && !File.exist?(File.join(REPO_ROOT, "scripts/devlog/server.py"))
   B.die("--devlog needs DevLog in the app and scripts/devlog/server.py; this app has neither yet")
 end
@@ -240,10 +244,6 @@ end
 File.write(PBXPROJ, Versioning.write(File.read(PBXPROJ), version: version, build: build))
 
 # --- build -------------------------------------------------------------------
-
-# Registered after the restore hook, so it runs first (at_exit is LIFO) -- the
-# order does not matter, they touch different files.
-at_exit { B.clean_up! }
 
 devlog_url = if DEVLOG
   B.env("DEVLOG_URL") || "http://#{`scutil --get LocalHostName`.strip}.local:19480/api/devlog"
