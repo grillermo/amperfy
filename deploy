@@ -10,6 +10,8 @@
 #   2. build an ad-hoc-signed .ipa + its OTA manifest   (scripts/deploy/ipa_builder.rb)
 #   3. publish the .ipa, icon, manifest and install page to AMPERFY_UPLOAD_BASE
 #   4. commit the bump, tag amperfy-ota-vX.Y.Z, and push master to `github` (the fork)
+#   5. build the Mac Catalyst app and install it on this Mac (../build-macos.sh;
+#      AMPERFY_SKIP_MACOS=1 skips it)
 #
 # The install page URL never changes, so a Home Screen bookmark on the device
 # always installs the newest release. It is printed at the end.
@@ -398,3 +400,15 @@ puts B.bold("\n    Install from Safari on the device:")
 puts B.bold("    #{INSTALL_URL}")
 puts "    Manifest: #{MANIFEST_URL}"
 puts "\n    Add it to the Home Screen once; it always installs the newest release."
+
+# --- Mac app -----------------------------------------------------------------
+
+# A release also replaces the Mac Catalyst app on this Mac (~/Applications),
+# built from the release commit so both apps carry the same version.
+# AMPERFY_SKIP_MACOS=1 skips it (../build sets it and runs build-macos.sh
+# itself, so the Mac app updates even when the iOS release fails).
+unless B.env("SKIP_MACOS") == "1"
+  B.step "Building and installing the Mac app on this Mac (build-macos.sh)"
+  system(File.join(REPO_ROOT, "build-macos.sh"), chdir: REPO_ROOT) or
+    B.die("the iOS release is out, but the Mac app failed to build or install; re-run ./build-macos.sh")
+end

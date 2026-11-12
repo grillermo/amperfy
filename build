@@ -32,7 +32,9 @@ start=$(date +%s)
 
 if [ "${AMPERFY_SKIP_IOS:-}" != "1" ]; then
   bold "==> [1/2] iOS: OTA deploy (build-ios.sh)"
-  if "$ROOT/build-ios.sh" "$@"; then ios_status=ok; else ios_status="failed ($?)"; fi
+  # ./deploy installs the Mac app itself on success; here step 2 does it, so
+  # it also happens when the iOS release fails.
+  if AMPERFY_SKIP_MACOS=1 "$ROOT/build-ios.sh" "$@"; then ios_status=ok; else ios_status="failed ($?)"; fi
 fi
 
 if [ "${AMPERFY_SKIP_MACOS:-}" != "1" ]; then
