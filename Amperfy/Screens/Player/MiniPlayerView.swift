@@ -133,6 +133,57 @@ class MiniPlayerView: UIView {
     }
   }
 
+  /// Mac: clicking the artist name shows the artist (or the podcast of an episode) in the library.
+  @objc
+  func artistNameClicked(_ sender: UITapGestureRecognizer) {
+    guard sender.state == .ended else { return }
+    showArtistOfCurrentlyPlaying()
+  }
+
+  /// Shows the artist of the playing song (or the podcast of the playing episode) in the library.
+  /// Returns false when there is none to show.
+  @discardableResult
+  private func showArtistOfCurrentlyPlaying() -> Bool {
+    guard let hostVC = AppDelegate.mainWindowHostVC,
+          let playable = player.currentlyPlaying,
+          let account = playable.account
+    else { return false }
+    if let artist = playable.asSong?.artist {
+      hostVC.pushNavLibrary(vc: AppStoryboard.Main.segueToArtistDetail(
+        account: account,
+        artist: artist
+      ))
+      return true
+    } else if let episode = playable.asPodcastEpisode, let podcast = episode.podcast {
+      hostVC.pushNavLibrary(vc: AppStoryboard.Main.segueToPodcastDetail(
+        account: account,
+        podcast: podcast,
+        episodeToScrollTo: episode
+      ))
+      return true
+    }
+    return false
+  }
+
+  @objc
+  func artistNameHovered(_ sender: UIHoverGestureRecognizer) {
+    switch sender.state {
+    case .began:
+      guard player.currentlyPlaying?.asSong?.artist != nil ||
+        player.currentlyPlaying?.asPodcastEpisode?.podcast != nil
+      else { return }
+      subtitleLabel.textColor = .label
+    case .cancelled, .ended, .failed:
+      refreshSubtitleColor()
+    default:
+      break
+    }
+  }
+
+  private func refreshSubtitleColor() {
+    subtitleLabel.textColor = traitCollection.userInterfaceStyle == .dark ? .lightGray : .darkGray
+  }
+
   @objc
   func timeSliderChanged(_ slider: UISlider) {
     playerHandler?.timeSliderChanged(timeSlider: timeSlider)
@@ -598,6 +649,16 @@ class MiniPlayerView: UIView {
     timeSlider.addTarget(self, action: #selector(timeSliderIsChanging(_:)), for: .touchDragInside)
     timeSlider.addTarget(self, action: #selector(timeSliderIsChanging(_:)), for: .touchDragOutside)
 
+    subtitleLabel.isUserInteractionEnabled = true
+    subtitleLabel.addGestureRecognizer(UITapGestureRecognizer(
+      target: self,
+      action: #selector(artistNameClicked(_:))
+    ))
+    subtitleLabel.addGestureRecognizer(UIHoverGestureRecognizer(
+      target: self,
+      action: #selector(artistNameHovered(_:))
+    ))
+
     NSLayoutConstraint.activate([
       leadingButtonsView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
       leadingButtonsView.topAnchor.constraint(equalTo: topAnchor, constant: 0),
@@ -710,6 +771,12 @@ class MiniPlayerView: UIView {
 
   @objc
   private func miniPlayerGotTouched(_ recognizer: UITapGestureRecognizer) {
+    // tapping the artist name shows the artist, anywhere else opens the player
+    let artistNameArea = subtitleLabel.bounds.insetBy(dx: 0, dy: -6)
+    if artistNameArea.contains(recognizer.location(in: subtitleLabel)),
+       showArtistOfCurrentlyPlaying() {
+      return
+    }
     openPlayerView()
   }
 
