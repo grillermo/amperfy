@@ -379,11 +379,13 @@ module IpaBuilder
     FileUtils.mkdir_p(WORK_ROOT)
     work    = Dir.mktmpdir("#{APP_NAME}-ipa-", WORK_ROOT)
     archive = File.join(work, "#{APP_NAME}.xcarchive")
-    # xcodebuild -exportArchive writes its IDEDistribution logs to TMPDIR, so
-    # point that into the work dir too.
+    # The xcodebuild calls get a TMPDIR in the work dir, set on their command
+    # line only: ENV["TMPDIR"] would outlive the work dir, which clean_up!
+    # deletes before ../../deploy commits, and git's SSH commit signing writes
+    # its temp file to TMPDIR ("could not create temporary file").
     tmp = File.join(work, "tmp")
     FileUtils.mkdir_p(tmp)
-    ENV["TMPDIR"] = tmp
+    tmpdir = "TMPDIR=#{Shellwords.escape(tmp)} "
     # Keeps DerivedData, the resolved Swift packages and their cache out of
     # ~/Library, and the SwiftFormat phase from building swiftformat there.
     contained = "-derivedDataPath #{Shellwords.escape(File.join(work, "DerivedData"))} " \
@@ -400,7 +402,7 @@ module IpaBuilder
 
     step "Archiving (xcodebuild)#{unsigned? ? ' [UNSIGNED]' : ''}"
     run(
-      "xcodebuild " \
+      "#{tmpdir}xcodebuild " \
       "-project #{Shellwords.escape(PROJECT)} " \
       "-scheme #{Shellwords.escape(SCHEME)} " \
       "-configuration Release " \
@@ -422,7 +424,7 @@ module IpaBuilder
     step "Exporting signed .ipa (ad hoc)"
     options = export_options_plist(File.join(work, "ExportOptions.plist"), manifest: manifest)
     run(
-      "xcodebuild -exportArchive " \
+      "#{tmpdir}xcodebuild -exportArchive " \
       "-archivePath #{Shellwords.escape(archive)} " \
       "-exportPath #{Shellwords.escape(work)} " \
       "-exportOptionsPlist #{Shellwords.escape(options)} " \

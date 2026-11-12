@@ -239,6 +239,9 @@ at_exit do
   originals.each do |file, content|
     content.nil? ? FileUtils.rm_f(file) : File.write(file, content)
   end
+  # A failed `git commit` leaves the bump staged; unstage it too, or the next
+  # run's clean-tree check fails.
+  system("git", "reset", "-q", "--", *MUTATED_FILES, chdir: REPO_ROOT)
 end
 
 # Only the app target: AmperfyKit and the tests keep their own 1.0 / 1.
