@@ -35,15 +35,25 @@ After the first install, long-press the app icon and pick **Install Latest** to 
 
 ## Nothing left behind
 
-The build runs in `./build` (DerivedData, Swift packages, archive, the export's temp logs)
-and is deleted on exit, success or failure. So is whatever the run added to the shared
+The build runs in `tmp/ios-ota/` (DerivedData, Swift packages, archive, the export's temp
+logs) and is deleted on exit, success or failure; `build-macos.sh` does the same in
+`tmp/macos/`, and `tmp/` goes once both are gone. So is whatever the run added to the shared
 caches xcodebuild writes to regardless (provisioning profiles, SwiftPM's manifest cache,
-Xcode's plug-in caches; see `SHARED_CACHE_DIRS` in `ipa_builder.rb`). Rows it adds to
-SwiftPM's existing `manifest.db` stay, since other projects share that file. The SwiftFormat build phase is skipped for these builds
-(`AMPERFY_SKIP_SWIFTFORMAT=YES`): it would build swiftformat with `swift run`, which fills
-SwiftPM's caches in `~/Library`. What remains is what's in files.chiq.me: the versioned
-`.ipa` plus the pinned `amperfy-manifest.plist`, `amperfy-icon.png` and
-`amperfy-install.html` it needs.
+Xcode's plug-in caches; see `SHARED_CACHE_DIRS` in `ipa_builder.rb`), the per-package
+`ManifestLoading/<package>.dia` files SwiftPM rewrites on every build, and the empty
+`swiftpm/configuration/` dir xcodebuild creates in the project. Both scripts share that
+cleanup (`IpaBuilder.clean_shared_caches!`). Rows a build adds to SwiftPM's existing
+`manifest.db`, and xcodebuild's own `Cache.db`/`HTTPStorages` databases, stay: they are
+shared by every project and cannot be split.
+
+The SwiftFormat build phase is skipped for these builds (`AMPERFY_SKIP_SWIFTFORMAT=YES`): it
+would build swiftformat with `swift run`, which fills SwiftPM's caches in `~/Library`. What
+remains is what's in files.chiq.me: the versioned `.ipa` plus the pinned
+`amperfy-manifest.plist`, `amperfy-icon.png` and `amperfy-install.html` it needs (and, with
+`./build`, the Mac app in `~/Applications`).
+
+Opening the project in Xcode's GUI is different: that uses `~/Library/Developer/Xcode/DerivedData`
+and SwiftPM's shared `repositories/` cache, which these scripts never touch.
 
 ## Setup (both files gitignored)
 

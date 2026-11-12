@@ -2,8 +2,9 @@
 # Builds the Mac Catalyst app on this machine, quits the running Amperfy,
 # installs the new build to ~/Applications/Amperfy.app and launches it.
 #
-# Every build artifact lives in ./build and is deleted when the script exits
+# Every build artifact lives in tmp/macos and is deleted when the script exits
 # (success or failure), so each run is a clean build with no cache left behind.
+# ./build runs this together with build-ios.sh (the OTA deploy).
 #
 # Usage: ./build-macos.sh
 set -euo pipefail
@@ -15,16 +16,26 @@ cd "$ROOT"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
 APP_NAME="Amperfy"
-WORK_DIR="$ROOT/build/macos"
+WORK_DIR="$ROOT/tmp/macos"
 DEST_DIR="$HOME/Applications"
 DEST_APP="$DEST_DIR/$APP_NAME.app"
+
 PRODUCT="$WORK_DIR/DerivedData/Build/Products/Release-maccatalyst/$APP_NAME.app"
+
+# Before any xcodebuild call: on exit, whatever was created in Xcode's and
+# SwiftPM's shared caches since this moment is deleted (IpaBuilder's
+# clean_shared_caches!, the same cleanup ./deploy does).
+AMPERFY_RUN_STARTED="$(date +%s)"
+export AMPERFY_RUN_STARTED
 
 cleanup() {
   echo "==> Removing build artifacts"
-  rm -rf "$ROOT/build"
+  rm -rf "$WORK_DIR"
+  rmdir "$ROOT/tmp" 2>/dev/null || true
   # SwiftFormat is built by the "applyFormat" build phase into BuildTools/.build
   rm -rf "$ROOT/BuildTools/.build" "$ROOT/BuildTools/.swiftpm"
+  ruby -e 'require ARGV[0]; IpaBuilder.clean_shared_caches!' "$ROOT/scripts/deploy/ipa_builder.rb" ||
+    echo "warning: could not clean the shared Xcode/SwiftPM caches" >&2
 }
 trap cleanup EXIT
 
@@ -37,8 +48,10 @@ if ! xcodebuild -checkFirstLaunchStatus; then
   xcodebuild -runFirstLaunch
 fi
 
-rm -rf "$ROOT/build"
-mkdir -p "$WORK_DIR"
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR/tmp"
+# xcodebuild and its tools write temp files to TMPDIR; keep them in the work dir.
+export TMPDIR="$WORK_DIR/tmp"
 
 echo "==> Building $APP_NAME (Mac Catalyst, Release, $(uname -m))"
 xcodebuild \

@@ -23,7 +23,7 @@
 #
 # Nothing stays on this Mac. Every artifact (DerivedData, resolved packages,
 # the archive, the export's logs in TMPDIR, the .ipa) lives in one work dir
-# under build/ that ../../deploy deletes on exit, success or failure, along with
+# under tmp/ios-ota/ that ../../deploy deletes on exit, success or failure, along with
 # any provisioning profile Xcode downloaded for the export. The SwiftFormat build
 # phase is skipped (AMPERFY_SKIP_SWIFTFORMAT): its `swift run` fills SwiftPM's
 # caches in ~/Library, outside anything we could clean.
@@ -229,9 +229,10 @@ module IpaBuilder
     path
   end
 
-  # Where every build artifact goes: build/ in the repo (gitignored), the same
-  # place build-macos.sh uses. `clean_up!` deletes it.
-  WORK_ROOT = File.join(REPO_ROOT, "build")
+  # Where every build artifact goes: tmp/ios-ota/ in the repo (gitignored).
+  # build-macos.sh uses its own tmp/macos/, so ../../build can run both and
+  # neither cleanup touches the other's files. `clean_up!` deletes it.
+  WORK_ROOT = File.join(REPO_ROOT, "tmp", "ios-ota")
   # Shared places xcodebuild writes to even with every path flag pointed at
   # WORK_ROOT: provisioning profiles from -allowProvisioningUpdates, SwiftPM's
   # manifest cache, Xcode's per-version plug-in caches. Other projects use them
@@ -244,6 +245,7 @@ module IpaBuilder
     "~/Library/Caches/org.swift.swiftpm",
     "~/.swiftpm",
     File.join(`getconf DARWIN_USER_CACHE_DIR`.strip, "com.apple.DeveloperTools"),
+    File.join(`getconf DARWIN_USER_CACHE_DIR`.strip, "com.apple.dt.AssetCatalogAgent-AssetRuntime"),
   ].map { |d| File.expand_path(d) }.freeze
 
   # When this run started. ../../build-ios.sh sets AMPERFY_RUN_STARTED before
@@ -266,6 +268,66 @@ module IpaBuilder
   # SHARED_CACHE_DIRS (the next run fetches or rebuilds it again).
   def clean_up!
     FileUtils.rm_rf(WORK_ROOT)
+    remove_tmp_dir_if_empty
+    clean_shared_caches!
+  end
+
+  # tmp/ holds only the work dirs of ./deploy and ../../build-macos.sh; once
+  # both are gone it goes too (Dir.rmdir fails, harmlessly, while one runs).
+  def remove_tmp_dir_if_empty
+    Dir.rmdir(File.dirname(WORK_ROOT))
+  rescue SystemCallError
+    nil
+  end
+
+  # SwiftPM rewrites a <package identity>.dia here on every manifest load, so
+  # the file is usually older than the run and the birth-time rule above misses
+  # it. Ours are the ones named after a package in Package.resolved that this
+  # run touched.
+  MANIFEST_DIAGNOSTICS_DIR = File.expand_path("~/Library/Caches/org.swift.swiftpm/manifests/ManifestLoading")
+  SWIFTPM_DIR = File.join(REPO_ROOT, PROJECT, "project.xcworkspace", "xcshareddata", "swiftpm")
+  # Empty dir xcodebuild creates in the repo; git does not show it.
+  SWIFTPM_CONFIGURATION_DIR = File.join(SWIFTPM_DIR, "configuration")
+
+  def package_identities
+    File.read(File.join(SWIFTPM_DIR, "Package.resolved")).scan(/"identity"\s*:\s*"([^"]+)"/).flatten
+  rescue SystemCallError
+    []
+  end
+
+  # Xcode's helper services (ibtoold for storyboards, the asset catalog agent
+  # for the app icon) run under launchd with the system TMPDIR, not ours. Only
+  # their dirs born this run go: ibtoold-<pid>/, and <UUID>/ dirs holding a
+  # render of our icon. The rest of that TMPDIR belongs to other apps.
+  def xcode_service_temp_dirs
+    tmp = `getconf DARWIN_USER_TEMP_DIR`.strip
+    return [] if tmp.empty?
+
+    Dir.children(tmp).map { |name| File.join(tmp, name) }.select do |dir|
+      next false unless File.directory?(dir) && !File.symlink?(dir)
+      next false unless File.lstat(dir).birthtime >= RUN_STARTED
+
+      File.basename(dir).start_with?("ibtoold-") ||
+        Dir.children(dir).any? { |f| f.start_with?("#{APP_NAME}AppIcon") }
+    rescue SystemCallError, NotImplementedError
+      false
+    end
+  end
+
+  # Also run by ../../build-macos.sh on exit, with its own RUN_STARTED.
+  def clean_shared_caches!
+    begin
+      Dir.rmdir(SWIFTPM_CONFIGURATION_DIR)
+    rescue SystemCallError
+      nil # absent, or someone put something in it
+    end
+
+    xcode_service_temp_dirs.each { |dir| FileUtils.rm_rf(dir) }
+
+    package_identities.each do |id|
+      dia = File.join(MANIFEST_DIAGNOSTICS_DIR, "#{id}.dia")
+      FileUtils.rm_f(dia) if File.file?(dia) && File.mtime(dia) >= RUN_STARTED
+    end
 
     added = shared_cache_entries_added
     # Deepest first, so a new directory is empty by the time it is removed.
