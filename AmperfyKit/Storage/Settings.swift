@@ -292,6 +292,13 @@ public struct UserSettings: Sendable, Codable {
     set { _favoriteSongSortSetting = newValue }
   }
 
+  private var _artistSongsSortSetting: SongElementSortType = .defaultValue
+  /// Sort order of the songs on an artist's page
+  public var artistSongsSortSetting: SongElementSortType {
+    get { _artistSongsSortSetting }
+    set { _artistSongsSortSetting = newValue }
+  }
+
   private var _artistsFilterSetting: ArtistCategoryFilter = .defaultValue
   public var artistsFilterSetting: ArtistCategoryFilter {
     get { _artistsFilterSetting }

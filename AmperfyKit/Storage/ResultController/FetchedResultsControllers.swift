@@ -594,16 +594,33 @@ public class ArtistAlbumsItemsFetchedResultsController: BasicFetchedResultsContr
 public class ArtistSongsItemsFetchedResultsController: BasicFetchedResultsController<SongMO> {
   let artist: Artist
   let displayFilter: ArtistCategoryFilter
+  public let sortType: SongElementSortType
 
   public init(
     for artist: Artist,
     displayFilter: ArtistCategoryFilter,
+    sortType: SongElementSortType = .name,
     coreDataCompanion: CoreDataCompanion,
     isGroupedInAlphabeticSections: Bool
   ) {
     self.artist = artist
     self.displayFilter = displayFilter
-    let fetchRequest = SongMO.alphabeticSortedFetchRequest
+    self.sortType = sortType
+    let fetchRequest: NSFetchRequest<SongMO>
+    switch sortType {
+    case .name:
+      fetchRequest = SongMO.alphabeticSortedFetchRequest
+    case .rating:
+      fetchRequest = SongMO.ratingSortedFetchRequest
+    case .addedDate:
+      fetchRequest = SongMO.addedDateSortedFetchRequest
+    case .duration:
+      fetchRequest = SongMO.durationSortedFetchRequest
+    case .starredDate:
+      fetchRequest = SongMO.starredDateSortedFetchRequest
+    case .lastPlayed:
+      fetchRequest = SongMO.lastPlayedDateSortedFetchRequest
+    }
     switch self.displayFilter {
     case .all, .favorites:
       fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [

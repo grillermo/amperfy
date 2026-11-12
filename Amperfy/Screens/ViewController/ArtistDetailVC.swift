@@ -61,13 +61,9 @@ class ArtistDetailVC: MultiSourceTableViewController {
       isGroupedInAlphabeticSections: false
     )
     albumsFetchedResultsController.delegate = self
-    songsFetchedResultsController = ArtistSongsItemsFetchedResultsController(
-      for: artist,
-      displayFilter: appDelegate.storage.settings.user.artistsFilterSetting,
-      coreDataCompanion: appDelegate.storage.main,
-      isGroupedInAlphabeticSections: false
+    songsFetchedResultsController = createSongsFetchedResultsController(
+      sortType: appDelegate.storage.settings.user.artistSongsSortSetting
     )
-    songsFetchedResultsController.delegate = self
     albumsGridVC = ArtistAlbumsGridVC(
       account: account,
       albumsFetchedResultsController: albumsFetchedResultsController
@@ -224,6 +220,89 @@ class ArtistDetailVC: MultiSourceTableViewController {
     tableView.reloadSections(
       IndexSet(integer: LibraryElement.Album.rawValue - 1),
       with: .none
+    )
+  }
+
+  private func createSongsFetchedResultsController(sortType: SongElementSortType)
+    -> ArtistSongsItemsFetchedResultsController {
+    let controller = ArtistSongsItemsFetchedResultsController(
+      for: artist,
+      displayFilter: appDelegate.storage.settings.user.artistsFilterSetting,
+      sortType: sortType,
+      coreDataCompanion: appDelegate.storage.main,
+      isGroupedInAlphabeticSections: false
+    )
+    controller.delegate = self
+    return controller
+  }
+
+  private func change(songsSortType sortType: SongElementSortType) {
+    guard sortType != songsFetchedResultsController.sortType else { return }
+    appDelegate.storage.settings.user.artistSongsSortSetting = sortType
+    songsFetchedResultsController.delegate = nil
+    songsFetchedResultsController = createSongsFetchedResultsController(sortType: sortType)
+    // applies the active search to the new controller and reloads the table
+    updateSearchResults(for: searchController)
+  }
+
+  private func createSongsSortMenu() -> UIMenu {
+    var sortTypes: [(String, SongElementSortType)] = [
+      ("Name", .name),
+      ("Rating", .rating),
+      ("Duration", .duration),
+      ("Recently Played", .lastPlayed),
+    ]
+    if account.apiType.asServerApiType != .ampache {
+      sortTypes.append(("Date Added", .addedDate))
+    }
+    let current = songsFetchedResultsController.sortType
+    let actions = sortTypes.map { title, sortType in
+      UIAction(title: title, image: sortType == current ? .check : nil) { [weak self] _ in
+        self?.change(songsSortType: sortType)
+      }
+    }
+    return UIMenu(title: "Sort", image: .sort, options: [.displayInline], children: actions)
+  }
+
+  private static let songsSortButtonTag = 4_242
+
+  /// The ⋯ button at the trailing end of the "Songs" section header, with the sort options.
+  /// Header views are reused across sections, so other sections hide it.
+  private func configureSongsSortButton(in header: UITableViewHeaderFooterView, isShown: Bool) {
+    var button = header.contentView.viewWithTag(Self.songsSortButtonTag) as? UIButton
+    if button == nil, isShown {
+      let newButton = UIButton(type: .system)
+      newButton.tag = Self.songsSortButtonTag
+      newButton.setImage(.ellipsis, for: .normal)
+      newButton.showsMenuAsPrimaryAction = true
+      newButton.accessibilityLabel = "Sort Songs"
+      newButton.translatesAutoresizingMaskIntoConstraints = false
+      header.contentView.addSubview(newButton)
+      NSLayoutConstraint.activate([
+        newButton.trailingAnchor
+          .constraint(equalTo: header.contentView.layoutMarginsGuide.trailingAnchor),
+        newButton.centerYAnchor.constraint(equalTo: header.contentView.centerYAnchor),
+        newButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+        newButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+      ])
+      button = newButton
+    }
+    button?.isHidden = !isShown
+    if isShown {
+      button?.menu = createSongsSortMenu()
+    }
+  }
+
+  override func tableView(
+    _ tableView: UITableView,
+    willDisplayHeaderView view: UIView,
+    forSection section: Int
+  ) {
+    super.tableView(tableView, willDisplayHeaderView: view, forSection: section)
+    guard let header = view as? UITableViewHeaderFooterView else { return }
+    configureSongsSortButton(
+      in: header,
+      isShown: section + 1 == LibraryElement.Song.rawValue
     )
   }
 
