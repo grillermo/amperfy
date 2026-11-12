@@ -232,24 +232,40 @@ module IpaBuilder
   # Where every build artifact goes: build/ in the repo (gitignored), the same
   # place build-macos.sh uses. `clean_up!` deletes it.
   WORK_ROOT = File.join(REPO_ROOT, "build")
-  PROFILES_DIRS = [
-    File.expand_path("~/Library/Developer/Xcode/UserData/Provisioning Profiles"),
-    File.expand_path("~/Library/MobileDevice/Provisioning Profiles"),
-  ].freeze
+  # Shared places xcodebuild writes to even with every path flag pointed at
+  # WORK_ROOT: provisioning profiles from -allowProvisioningUpdates, SwiftPM's
+  # manifest cache, Xcode's per-version plug-in caches. Other projects use them
+  # too, so they are never wiped: `clean_up!` deletes only what appeared in them
+  # during this run. (Rows added to SwiftPM's existing manifest.db stay; that
+  # file is shared and cannot be split by project.)
+  SHARED_CACHE_DIRS = [
+    "~/Library/Developer/Xcode/UserData/Provisioning Profiles",
+    "~/Library/MobileDevice/Provisioning Profiles",
+    "~/Library/Caches/org.swift.swiftpm",
+    "~/.swiftpm",
+    File.join(`getconf DARWIN_USER_CACHE_DIR`.strip, "com.apple.DeveloperTools"),
+  ].map { |d| File.expand_path(d) }.freeze
 
-  def provisioning_profiles
-    PROFILES_DIRS.flat_map { |d| Dir.glob(File.join(d, "*")) }
+  def shared_cache_entries
+    SHARED_CACHE_DIRS.flat_map do |dir|
+      Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH).reject { |p| p.end_with?("/.", "/..") }
+    end
   end
 
   # Called from ../../deploy's at_exit, so it runs on success, failure and
-  # Ctrl-C alike. Removes the work dir and the provisioning profiles that
-  # -allowProvisioningUpdates downloaded during this run (the next run fetches
-  # them again); profiles that were already there are left alone.
+  # Ctrl-C alike. Removes the work dir and whatever the build added to
+  # SHARED_CACHE_DIRS (the next run fetches or rebuilds it again).
   def clean_up!
     FileUtils.rm_rf(WORK_ROOT)
-    return unless @profiles_before
+    return unless @shared_before
 
-    (provisioning_profiles - @profiles_before).each { |f| FileUtils.rm_f(f) }
+    added = shared_cache_entries - @shared_before
+    # Deepest first, so a new directory is empty by the time it is removed.
+    added.sort_by { |p| -p.count("/") }.each do |path|
+      File.directory?(path) && !File.symlink?(path) ? Dir.rmdir(path) : FileUtils.rm_f(path)
+    rescue SystemCallError
+      nil # a non-empty dir that already existed somewhere below; leave it
+    end
   end
 
   # Build the .ipa from source and return its path. It sits in a fresh dir
@@ -269,7 +285,7 @@ module IpaBuilder
     ENV["DEVELOPER_DIR"] = resolve_developer_dir
     puts "    DEVELOPER_DIR=#{ENV['DEVELOPER_DIR']}"
 
-    @profiles_before ||= provisioning_profiles
+    @shared_before ||= shared_cache_entries
     FileUtils.mkdir_p(WORK_ROOT)
     work    = Dir.mktmpdir("#{APP_NAME}-ipa-", WORK_ROOT)
     archive = File.join(work, "#{APP_NAME}.xcarchive")

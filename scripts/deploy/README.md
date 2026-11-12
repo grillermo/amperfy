@@ -36,8 +36,10 @@ After the first install, long-press the app icon and pick **Install Latest** to 
 ## Nothing left behind
 
 The build runs in `./build` (DerivedData, Swift packages, archive, the export's temp logs)
-and is deleted on exit, success or failure. Provisioning profiles Xcode downloads during
-the run are removed too. The SwiftFormat build phase is skipped for these builds
+and is deleted on exit, success or failure. So is whatever the run added to the shared
+caches xcodebuild writes to regardless (provisioning profiles, SwiftPM's manifest cache,
+Xcode's plug-in caches; see `SHARED_CACHE_DIRS` in `ipa_builder.rb`). Rows it adds to
+SwiftPM's existing `manifest.db` stay, since other projects share that file. The SwiftFormat build phase is skipped for these builds
 (`AMPERFY_SKIP_SWIFTFORMAT=YES`): it would build swiftformat with `swift run`, which fills
 SwiftPM's caches in `~/Library`. What remains is what's in files.chiq.me: the versioned
 `.ipa` plus the pinned `amperfy-manifest.plist`, `amperfy-icon.png` and
