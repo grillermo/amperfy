@@ -23,6 +23,8 @@ import AmperfyKit
 import CoreData
 import UIKit
 
+// MARK: - ArtistDetailVC
+
 class ArtistDetailVC: MultiSourceTableViewController {
   override var sceneTitle: String? { artist.name }
 
@@ -405,7 +407,6 @@ class ArtistDetailVC: MultiSourceTableViewController {
     for type: NSFetchedResultsChangeType
   ) {}
 }
-
 
 // MARK: - ArtistAlbumsGridVC
 

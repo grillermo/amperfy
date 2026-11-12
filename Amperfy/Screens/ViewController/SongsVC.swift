@@ -255,6 +255,8 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
       return 0.0
     case .starredDate:
       return 0.0
+    case .lastPlayed:
+      return 0.0
     }
   }
 
@@ -278,6 +280,8 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
     case .duration:
       return nil
     case .starredDate:
+      return nil
+    case .lastPlayed:
       return nil
     }
   }
@@ -435,6 +439,20 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
         )
       }
     )
+    let sortByLastPlayed = UIAction(
+      title: "Recently Played",
+      image: sortType == .lastPlayed ? .check : nil,
+      handler: { _ in
+        self.change(sortType: .lastPlayed)
+        self.saveSortPreference(preference: .lastPlayed)
+        self.updateSearchResults(for: self.searchController)
+        self.appDelegate.notificationHandler.post(
+          name: .fetchControllerSortChanged,
+          object: nil,
+          userInfo: nil
+        )
+      }
+    )
     let sortByAddedDate = UIAction(
       title: "Date Added",
       image: sortType == .addedDate ? .check : nil,
@@ -454,21 +472,28 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
         title: "Sort",
         image: .sort,
         options: [],
-        children: [sortByName, sortByRating, sortByDuration, sortByStarredDate, sortByAddedDate]
+        children: [
+          sortByName,
+          sortByRating,
+          sortByDuration,
+          sortByLastPlayed,
+          sortByStarredDate,
+          sortByAddedDate,
+        ]
       )
     } else if account.apiType.asServerApiType != .ampache {
       return UIMenu(
         title: "Sort",
         image: .sort,
         options: [],
-        children: [sortByName, sortByRating, sortByDuration, sortByAddedDate]
+        children: [sortByName, sortByRating, sortByDuration, sortByLastPlayed, sortByAddedDate]
       )
     } else {
       return UIMenu(
         title: "Sort",
         image: .sort,
         options: [],
-        children: [sortByName, sortByRating, sortByDuration]
+        children: [sortByName, sortByRating, sortByDuration, sortByLastPlayed]
       )
     }
   }
