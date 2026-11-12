@@ -52,7 +52,15 @@ public class QuickActionsHandler {
     case playPodcastAction = "PlayPodcastAction"
     case onlineModeAction = "OnlineModeAction"
     case offlineModeAction = "OfflineModeAction"
+    /// Static item from Info.plist. `./deploy` republishes the OTA manifest under
+    /// this pinned name on every release, so it always installs the newest build.
+    case installLatestAction = "InstallLatestAction"
   }
+
+  static let installLatestURL =
+    URL(
+      string: "itms-services://?action=download-manifest&url=https://files.chiq.me/files/amperfy-manifest.plist"
+    )!
 
   public func savedShortCutItemForLaterUse(savedShortCutItem: UIApplicationShortcutItem) {
     self.savedShortCutItem = savedShortCutItem
@@ -154,6 +162,8 @@ public class QuickActionsHandler {
         storage.settings.user.isOfflineMode = true
       case .onlineModeAction:
         storage.settings.user.isOfflineMode = false
+      case .installLatestAction:
+        application.open(Self.installLatestURL)
       }
     }
     return true
