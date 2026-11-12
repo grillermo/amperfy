@@ -1,32 +1,78 @@
 # frozen_string_literal: true
 
-# Builds an ad-hoc-signed Amperfy .ipa from Amperfy.xcodeproj, together with the
-# OTA manifest.plist an `itms-services://` link points at. Signed with the paid
-# team Q3WS4MWCW3, so it installs from Safari with no cable, but only on devices
-# registered on the portal, and only once the App ID exists there:
-#   me.chiq.amperfy   (with the Siri capability)
-# CarPlay audio is an Apple-granted entitlement this team does not have, so it is
-# dropped from Amperfy/Amperfy.entitlements in this fork.
+# ipa_builder.rb
+#
+# Builds an ad-hoc-signed Amperfy .ipa from source, together with the OTA
+# manifest.plist that an `itms-services://` link points at. Used by ../../deploy.
+#
+# The .ipa is signed with the paid Apple Developer Program team in
+# Config/Local.xcconfig (DEVELOPMENT_TEAM). That is what lets iOS install it
+# straight from Safari over an `itms-services://` link -- no AltStore, no cable,
+# and a signature good for a year instead of the free tier's 7 days. The price is
+# that an Ad Hoc profile only covers **devices registered on the portal**: a
+# device whose UDID was added after this .ipa was built cannot install it, so
+# adding a device means registering it and then re-running ../../deploy.
+#
+# Set AMPERFY_UNSIGNED=1 to fall back to an unsigned archive. That build cannot
+# be installed from Safari; it exists so a broken signing setup does not block
+# producing a binary.
+#
+# Fork specifics: signed as me.chiq.amperfy (with the Siri capability) for team
+# Q3WS4MWCW3. CarPlay audio is an entitlement Apple grants per team and this one
+# does not have it, so Amperfy/Amperfy.entitlements drops it in this fork.
+#
+# Nothing stays on this Mac. Every artifact (DerivedData, resolved packages,
+# the archive, the export's logs in TMPDIR, the .ipa) lives in one work dir
+# under build/ that ../../deploy deletes on exit, success or failure, along with
+# any provisioning profile Xcode downloaded for the export. The SwiftFormat build
+# phase is skipped (AMPERFY_SKIP_SWIFTFORMAT): its `swift run` fills SwiftPM's
+# caches in ~/Library, outside anything we could clean.
 
 require "fileutils"
 require "shellwords"
 require "tmpdir"
 
+require_relative "versioning"
+
 module IpaBuilder
-  APP_NAME  = "Amperfy"
-  SCHEME    = "Amperfy"
-  REPO_ROOT = File.expand_path(File.join(__dir__, "..", ".."))
-  PROJECT   = "Amperfy.xcodeproj"
-  PBXPROJ   = File.join(REPO_ROOT, PROJECT, "project.pbxproj")
-  BUNDLE_ID = "me.chiq.amperfy"
-  TEAM_ID   = "Q3WS4MWCW3"
+  # --- per-app settings ------------------------------------------------------
+  APP_NAME    = "Amperfy"            # PRODUCT_NAME: names the .app and the .ipa
+  APP_SLUG    = "amperfy"            # release tags and the pinned file names
+  ENV_PREFIX  = "AMPERFY"            # AMPERFY_UPLOAD_BASE, AMPERFY_UNSIGNED, ...
+  SCHEME      = "Amperfy"
+  PROJECT     = "Amperfy.xcodeproj"
+  ICON_SOURCE = "scripts/deploy/icon.png" # the 1024 px icon (the app itself uses an Icon Composer icon)
+  GIT_REMOTE  = "github"            # the fork; `origin` is upstream BLeeEZ/amperfy
+  GIT_REMOTE_URL = %r{[:/]grillermo/amperfy(\.git)?\z} # never push a release upstream
+  BRANCH      = "master"            # upstream's default branch
+  # ---------------------------------------------------------------------------
+
+  REPO_ROOT  = File.expand_path(File.join(__dir__, "..", ".."))
+  PROJECT_PBXPROJ = File.join(REPO_ROOT, PROJECT, "project.pbxproj")
+  XCCONFIGS  = [
+    File.join(REPO_ROOT, "Config", "Local.xcconfig"),
+    File.join(REPO_ROOT, "Config", "#{APP_NAME}.xcconfig"),
+  ].freeze
 
   module_function
 
-  def bold(str) = "\e[1m#{str}\e[0m"
-  def green(str) = "\e[32m#{str}\e[0m"
-  def red(str) = "\e[31m#{str}\e[0m"
-  def step(msg) = puts "\n#{bold("==> #{msg}")}"
+  # Plain `def ... end` throughout (no endless methods): over a non-interactive
+  # SSH session the macmini's `ruby` is the system Ruby 2.6.
+  def bold(str)
+    "\e[1m#{str}\e[0m"
+  end
+
+  def green(str)
+    "\e[32m#{str}\e[0m"
+  end
+
+  def red(str)
+    "\e[31m#{str}\e[0m"
+  end
+
+  def step(msg)
+    puts "\n#{bold("==> #{msg}")}"
+  end
 
   def die(msg)
     warn red("error: #{msg}")
@@ -38,75 +84,278 @@ module IpaBuilder
     system(cmd, chdir: chdir) or die("command failed: #{cmd}")
   end
 
+  def env(name)
+    ENV["#{ENV_PREFIX}_#{name}"]
+  end
+
+  def unsigned?
+    env("UNSIGNED") == "1"
+  end
+
+  # A build setting as Xcode resolves it: Config/Local.xcconfig (gitignored,
+  # personal) wins over the committed defaults in Config/Amperfy.xcconfig, so a
+  # fresh clone still builds.
+  def xcconfig_value(key)
+    XCCONFIGS.each do |path|
+      next unless File.exist?(path)
+
+      value = File.read(path)[/^\s*#{key}\s*=[ \t]*(\S*)/, 1]
+      return value if value && !value.empty?
+    end
+    nil
+  end
+
+  def bundle_id
+    xcconfig_value("#{ENV_PREFIX}_BUNDLE_ID")
+  end
+
+  # xcodebuild needs a full Xcode, not the Command Line Tools. Honour an existing
+  # DEVELOPER_DIR, otherwise point at the newest /Applications/Xcode*.app.
   def resolve_developer_dir
-    env = ENV["DEVELOPER_DIR"]
-    return env if env && Dir.exist?(env)
+    dir = ENV["DEVELOPER_DIR"]
+    return dir if dir && Dir.exist?(dir)
 
     xcode = Dir.glob("/Applications/Xcode*.app").max
     die("no Xcode.app found; install Xcode or set DEVELOPER_DIR") unless xcode
     File.join(xcode, "Contents", "Developer")
   end
 
-  def xml_escape(str) = str.to_s.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;")
+  # The app target's MARKETING_VERSION out of project.pbxproj (source of truth
+  # for the app version). AmperfyKit and the tests carry their own 1.0, so the
+  # first match in the file is not the app's one: see versioning.rb.
+  def marketing_version
+    Versioning.read(File.read(PROJECT_PBXPROJ))[:marketing]
+  rescue ArgumentError => e
+    die(e.message)
+  end
 
-  # `release-testing` is Xcode 15.3+'s name for ad-hoc. The `manifest` dict makes
-  # xcodebuild emit manifest.plist so it can never drift from the binary; appURL
-  # must be the .ipa's final public URL, known before the build.
+  def current_project_version
+    Versioning.read(File.read(PROJECT_PBXPROJ))[:build].to_s
+  rescue ArgumentError => e
+    die(e.message)
+  end
+
+  # Unlocks the keychain with the login password stored on this Mac, so an agent
+  # can deploy over SSH without anyone typing it. Shared by every app.
+  UNLOCK_SCRIPT = File.expand_path("~/c/agents-configs/bin/unlock-codesign-keychain.sh")
+
+  # Over SSH (or after the Mac sleeps) the login keychain is locked, and
+  # codesign cannot use the signing key: the archive then dies at its first
+  # CodeSign step with errSecInternalComponent, after minutes of compiling.
+  # Probe by signing a throwaway binary. If that fails, unlock with
+  # UNLOCK_SCRIPT, and only without it (or when it fails) fall back to
+  # `security unlock-keychain`, which prompts for the login password.
+  def ensure_codesign_can_sign!
+    return if unsigned?
+
+    probe = File.join(Dir.tmpdir, "#{APP_NAME}-codesign-probe-#{Process.pid}")
+    FileUtils.cp("/usr/bin/true", probe)
+    sign = "codesign -f -s 'Apple Development' #{Shellwords.escape(probe)} >/dev/null 2>&1"
+    return if system(sign)
+    return if File.executable?(UNLOCK_SCRIPT) && system(UNLOCK_SCRIPT)
+
+    puts red("    codesign cannot use your signing key -- the login keychain is locked.")
+    keychain = File.expand_path("~/Library/Keychains/login.keychain-db")
+    system("security unlock-keychain #{Shellwords.escape(keychain)}") or
+      die("could not unlock the login keychain")
+    system(sign) or
+      die("codesign still fails after unlocking; try: codesign -f -s 'Apple Development' /some/file")
+  ensure
+    FileUtils.rm_f(probe) if probe
+  end
+
+  # The Apple Developer team the .ipa is signed for. Config/Local.xcconfig is the
+  # source of truth; AMPERFY_TEAM_ID overrides it for a one-off.
+  def team_id
+    id = env("TEAM_ID") || xcconfig_value("DEVELOPMENT_TEAM")
+    die("no DEVELOPMENT_TEAM in Config/Local.xcconfig and no #{ENV_PREFIX}_TEAM_ID set") unless id
+    id
+  end
+
+  def xml_escape(str)
+    str.to_s.gsub("&", "&amp;").gsub("<", "&lt;").gsub(">", "&gt;")
+  end
+
+  # ExportOptions.plist for `xcodebuild -exportArchive`.
+  #
+  # `release-testing` re-signs the archive with the team's *distribution*
+  # certificate against an Ad Hoc provisioning profile, which embeds the UDIDs
+  # registered on the portal. It is Xcode 15.3+'s name for what used to be
+  # `ad-hoc`.
+  #
+  # Automatic signing will create the certificate and the profile on its own,
+  # but it will NOT create the App ID. Register the bundle ID as an Identifier on
+  # the portal first, or this export hits the "no profiles found" failure a
+  # brand-new bundle ID gets.
+  #
+  # The `manifest` dict is why we export at all rather than zipping a Payload/
+  # by hand: it makes xcodebuild emit the `manifest.plist` that an
+  # `itms-services://` link points at, so the OTA manifest can never drift
+  # from the binary it describes. Its appURL must be the .ipa's final public
+  # URL, which the caller knows before the build.
+  #
+  # thinning `<none>` keeps it one universal .ipa; a thinned export produces
+  # per-device variants that a single download URL cannot serve.
   def export_options_plist(path, manifest:)
-    File.write(path, <<~PLIST)
-      <?xml version="1.0" encoding="UTF-8"?>
-      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-      <plist version="1.0">
-      <dict>
-        <key>method</key><string>release-testing</string>
-        <key>teamID</key><string>#{TEAM_ID}</string>
-        <key>signingStyle</key><string>automatic</string>
-        <key>stripSwiftSymbols</key><true/>
-        <key>thinning</key><string>&lt;none&gt;</string>
-        <key>destination</key><string>export</string>
+    entries = [
+      "<key>method</key><string>release-testing</string>",
+      "<key>teamID</key><string>#{xml_escape(team_id)}</string>",
+      "<key>signingStyle</key><string>automatic</string>",
+      "<key>stripSwiftSymbols</key><true/>",
+      "<key>thinning</key><string>&lt;none&gt;</string>",
+      "<key>destination</key><string>export</string>",
+    ]
+
+    if manifest
+      entries << <<~PLIST.chomp
         <key>manifest</key>
         <dict>
           <key>appURL</key><string>#{xml_escape(manifest[:app_url])}</string>
           <key>displayImageURL</key><string>#{xml_escape(manifest[:icon_url])}</string>
           <key>fullSizeImageURL</key><string>#{xml_escape(manifest[:icon_url])}</string>
         </dict>
+      PLIST
+    end
+
+    File.write(path, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+      #{entries.join("\n")}
       </dict>
       </plist>
     PLIST
     path
   end
 
-  # Returns the .ipa path. The caller owns (and removes) File.dirname(ipa), where
-  # manifest.plist is also written.
-  def build(manifest:)
+  # Where every build artifact goes: build/ in the repo (gitignored), the same
+  # place build-macos.sh uses. `clean_up!` deletes it.
+  WORK_ROOT = File.join(REPO_ROOT, "build")
+  PROFILES_DIRS = [
+    File.expand_path("~/Library/Developer/Xcode/UserData/Provisioning Profiles"),
+    File.expand_path("~/Library/MobileDevice/Provisioning Profiles"),
+  ].freeze
+
+  def provisioning_profiles
+    PROFILES_DIRS.flat_map { |d| Dir.glob(File.join(d, "*")) }
+  end
+
+  # Called from ../../deploy's at_exit, so it runs on success, failure and
+  # Ctrl-C alike. Removes the work dir and the provisioning profiles that
+  # -allowProvisioningUpdates downloaded during this run (the next run fetches
+  # them again); profiles that were already there are left alone.
+  def clean_up!
+    FileUtils.rm_rf(WORK_ROOT)
+    return unless @profiles_before
+
+    (provisioning_profiles - @profiles_before).each { |f| FileUtils.rm_f(f) }
+  end
+
+  # Build the .ipa from source and return its path. It sits in a fresh dir
+  # under WORK_ROOT; when `manifest:` is given, the OTA `manifest.plist` is
+  # written **as a sibling** of the .ipa in that same dir. `clean_up!` removes
+  # all of it.
+  #
+  # `manifest:` is `{app_url:, icon_url:}` -- the public URLs the .ipa and its
+  # icon will live at once published. Omit it for a build nobody installs OTA.
+  #
+  # `ota_manifest_url:` and `devlog_url:` go in as command-line build settings,
+  # which Info.plist expands. An xcconfig file cannot carry them: it reads the
+  # `//` in a URL as the start of a comment.
+  def build(manifest: nil, ota_manifest_url: nil, devlog_url: nil)
+    die("project not found: #{File.join(REPO_ROOT, PROJECT)}") unless Dir.exist?(File.join(REPO_ROOT, PROJECT))
+
     ENV["DEVELOPER_DIR"] = resolve_developer_dir
     puts "    DEVELOPER_DIR=#{ENV['DEVELOPER_DIR']}"
 
-    work    = Dir.mktmpdir("#{APP_NAME}-ipa-")
+    @profiles_before ||= provisioning_profiles
+    FileUtils.mkdir_p(WORK_ROOT)
+    work    = Dir.mktmpdir("#{APP_NAME}-ipa-", WORK_ROOT)
     archive = File.join(work, "#{APP_NAME}.xcarchive")
+    # xcodebuild -exportArchive writes its IDEDistribution logs to TMPDIR, so
+    # point that into the work dir too.
+    tmp = File.join(work, "tmp")
+    FileUtils.mkdir_p(tmp)
+    ENV["TMPDIR"] = tmp
+    # Keeps DerivedData, the resolved Swift packages and their cache out of
+    # ~/Library, and the SwiftFormat phase from building swiftformat there.
+    contained = "-derivedDataPath #{Shellwords.escape(File.join(work, "DerivedData"))} " \
+                "-clonedSourcePackagesDirPath #{Shellwords.escape(File.join(work, "SourcePackages"))} " \
+                "-packageCachePath #{Shellwords.escape(File.join(work, "PackageCache"))} " \
+                "COMPILER_INDEX_STORE_ENABLE=NO " \
+                "#{ENV_PREFIX}_SKIP_SWIFTFORMAT=YES "
 
-    step "Archiving (xcodebuild)"
+    # Unsigned archives skip signing entirely; signed ones let Xcode fetch or
+    # create the certificate and profile it needs (-allowProvisioningUpdates).
+    signing = unsigned? ? "CODE_SIGNING_ALLOWED=NO " : "DEVELOPMENT_TEAM=#{team_id} "
+    ota = ota_manifest_url ? "#{ENV_PREFIX}_OTA_MANIFEST_URL=#{Shellwords.escape(ota_manifest_url)} " : ""
+    devlog = devlog_url ? "#{ENV_PREFIX}_DEVLOG_URL=#{Shellwords.escape(devlog_url)} " : ""
+
+    step "Archiving (xcodebuild)#{unsigned? ? ' [UNSIGNED]' : ''}"
     run(
-      "xcodebuild -project #{PROJECT} -scheme #{SCHEME} -configuration Release " \
-      "-destination 'generic/platform=iOS' -archivePath #{Shellwords.escape(archive)} " \
-      "DEVELOPMENT_TEAM=#{TEAM_ID} -allowProvisioningUpdates archive",
+      "xcodebuild " \
+      "-project #{Shellwords.escape(PROJECT)} " \
+      "-scheme #{Shellwords.escape(SCHEME)} " \
+      "-configuration Release " \
+      "-destination 'generic/platform=iOS' " \
+      "-archivePath #{Shellwords.escape(archive)} " \
+      "#{contained}" \
+      "#{signing}" \
+      "#{ota}" \
+      "#{devlog}" \
+      "-allowProvisioningUpdates " \
+      "archive",
       chdir: REPO_ROOT
     )
     die("archive not produced: #{archive}") unless Dir.exist?(archive)
+    puts green("    Built: #{archive}")
+
+    return package_unsigned(archive, work) if unsigned?
 
     step "Exporting signed .ipa (ad hoc)"
     options = export_options_plist(File.join(work, "ExportOptions.plist"), manifest: manifest)
     run(
-      "xcodebuild -exportArchive -archivePath #{Shellwords.escape(archive)} " \
-      "-exportPath #{Shellwords.escape(work)} -exportOptionsPlist #{Shellwords.escape(options)} " \
+      "xcodebuild -exportArchive " \
+      "-archivePath #{Shellwords.escape(archive)} " \
+      "-exportPath #{Shellwords.escape(work)} " \
+      "-exportOptionsPlist #{Shellwords.escape(options)} " \
       "-allowProvisioningUpdates",
       chdir: REPO_ROOT
     )
 
     ipa = File.join(work, "#{APP_NAME}.ipa")
-    die("export produced no .ipa in #{work} (see the xcodebuild output above). If it says " \
-        "\"no profiles found\", register the App ID on the developer portal (see the header of " \
-        "scripts/deploy/ipa_builder.rb) and make sure this device's UDID is registered.") unless File.exist?(ipa)
+    unless File.exist?(ipa)
+      die("export produced no .ipa in #{work} (see the xcodebuild output above). " \
+          "If this is a signing failure, check that the Apple ID for team " \
+          "#{team_id} is added in Xcode -> Settings -> Accounts, that the target " \
+          "device is registered on the portal, and that the App ID " \
+          "#{bundle_id || '(bundle ID)'} exists there: automatic signing creates " \
+          "certificates and profiles, but not App IDs.")
+    end
+    ipa
+  end
+
+  # The pre-signing packaging path, kept for AMPERFY_UNSIGNED=1: zip the .app
+  # into a Payload/ by hand so a resigning tool can sign it on-device.
+  def package_unsigned(archive, work)
+    app_path = File.join(archive, "Products", "Applications", "#{APP_NAME}.app")
+    die("no #{APP_NAME}.app inside archive: #{app_path}") unless Dir.exist?(app_path)
+
+    step "Packaging .ipa (unsigned)"
+    payload = File.join(work, "Payload")
+    FileUtils.mkdir_p(payload)
+    FileUtils.cp_r(app_path, payload)
+
+    ipa = File.join(work, "#{APP_NAME}.ipa")
+    # ditto --keepParent keeps the Payload/ dir at the archive root and preserves
+    # the symlinks inside embedded frameworks (plain zip can mangle them).
+    run(
+      "ditto -c -k --sequesterRsrc --keepParent " \
+      "#{Shellwords.escape(payload)} #{Shellwords.escape(ipa)}",
+      chdir: work
+    )
+
     ipa
   end
 end

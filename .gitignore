@@ -72,3 +72,8 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# OTA release (./deploy, build-ios.sh)
+.env
+Config/Local.xcconfig
+/build/

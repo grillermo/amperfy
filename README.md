@@ -56,6 +56,15 @@ Amperfy is an iOS/iPadOS/macOS app written in Swift to interact with an [Ampache
 
   >Real device testing: Amperfy has Apple CarPlay and Siri support. To test it on a real device a developer certificate with granted access to `com.apple.developer.playable-content` and `com.apple.developer.siri` is required. To test Amperfy without Apple CarPlay and Siri clear all entries in `Amperfy/Amperfy.entitlements`.
 
+## Fork: local builds and OTA releases
+
+- `./build-macos.sh` builds the Mac Catalyst app and installs it to `~/Applications`.
+- `./build-ios.sh` (on the macmini) builds an ad hoc `.ipa` and publishes it over the air to
+  files.chiq.me. It wraps `./deploy`; see [scripts/deploy/README.md](scripts/deploy/README.md)
+  for its flags, `.env` and `Config/Local.xcconfig`.
+
+Both delete their build files when they finish.
+
 ## Beta test releases
 
 For more information, and to participate in the public beta releases, please visit [Amperfy Beta](https://github.com/BLeeEZ/amperfy/issues/25).

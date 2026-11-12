@@ -4,7 +4,7 @@ require "minitest/autorun"
 require_relative "versioning"
 
 class VersioningTest < Minitest::Test
-  APP = "me.chiq.amperfy"
+  MARKER = "INFOPLIST_FILE = Amperfy/Info.plist;"
 
   PBX = <<~PBX.gsub("  ", "\t")
     \t\tA /* Debug */ = {
@@ -13,7 +13,7 @@ class VersioningTest < Minitest::Test
     \t\t\t\tCURRENT_PROJECT_VERSION = 7;
     \t\t\t\tMARKETING_VERSION = 2.1.1;
     \t\t\t\t"MARKETING_VERSION[sdk=macosx*]" = 2.1.1;
-    \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = me.chiq.amperfy;
+    \t\t\t\tINFOPLIST_FILE = Amperfy/Info.plist;
     \t\t\t};
     \t\t\tname = Debug;
     \t\t};
@@ -29,7 +29,7 @@ class VersioningTest < Minitest::Test
   PBX
 
   def test_read
-    assert_equal({ marketing: "2.1.1", build: 7 }, Versioning.read(PBX, bundle_id: APP))
+    assert_equal({ marketing: "2.1.1", build: 7 }, Versioning.read(PBX))
   end
 
   def test_bump_keywords
@@ -42,14 +42,14 @@ class VersioningTest < Minitest::Test
   end
 
   def test_write_touches_only_the_app_target
-    out = Versioning.write(PBX, bundle_id: APP, version: "2.1.2", build: 8)
-    assert_equal({ marketing: "2.1.2", build: 8 }, Versioning.read(out, bundle_id: APP))
+    out = Versioning.write(PBX, version: "2.1.2", build: 8)
+    assert_equal({ marketing: "2.1.2", build: 8 }, Versioning.read(out))
     assert_includes out, %("MARKETING_VERSION[sdk=macosx*]" = 2.1.2;)
     assert_includes out, "MARKETING_VERSION = 1.0;"
     assert_includes out, "CURRENT_PROJECT_VERSION = 1;"
   end
 
   def test_read_raises_without_the_app_target
-    assert_raises(ArgumentError) { Versioning.read(PBX, bundle_id: "nope") }
+    assert_raises(ArgumentError) { Versioning.read(PBX, marker: "nope") }
   end
 end

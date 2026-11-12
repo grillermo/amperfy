@@ -1,0 +1,13 @@
+// Project-wide signing defaults for this fork, so a fresh clone still builds.
+// Config/Local.xcconfig (gitignored) overrides them; ./deploy reads both.
+
+DEVELOPMENT_TEAM = Q3WS4MWCW3
+AMPERFY_BUNDLE_ID = me.chiq.amperfy
+
+#include? "Local.xcconfig"
+
+// build-macos.sh installs the Mac Catalyst app locally under upstream's bundle ID.
+// Keep it, so the installed Mac app keeps its sandbox container (library, settings).
+// Below the include on purpose: a later plain assignment in Local.xcconfig would
+// otherwise win over this one.
+AMPERFY_BUNDLE_ID[sdk=macosx*] = de.familie-zimba.amperfy-music

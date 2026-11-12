@@ -82,6 +82,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   }()
 
   var window: UIWindow?
+  /// An OTA quick action (`AppQuickAction`) that cold-launched the app. Opening a
+  /// URL before the scene is active is unreliable, so it waits for the first activation.
+  private var pendingAppQuickAction: AppQuickAction?
 
   func scene(
     _ scene: UIScene,
@@ -92,7 +95,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     /** Process the quick action if the user selected one to launch the app.
          Grab a reference to the shortcutItem to use in the scene.
      */
-    if let shortcutItem = connectionOptions.shortcutItem {
+    if let shortcutItem = connectionOptions.shortcutItem,
+       let action = AppQuickAction(shortcutType: shortcutItem.type) {
+      pendingAppQuickAction = action
+    } else if let shortcutItem = connectionOptions.shortcutItem {
       // Save it off for later when we become active.
       appDelegate.quickActionsManager.savedShortCutItemForLaterUse(savedShortCutItem: shortcutItem)
     }
@@ -177,11 +183,28 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     completionHandler: @escaping (Bool) -> ()
   ) {
     os_log("windowScene shortcutItem", log: self.log, type: .info)
+    if let action = AppQuickAction(shortcutType: shortcutItem.type) {
+      perform(action)
+      return completionHandler(true)
+    }
     guard appDelegate.isNormalInteraction else {
       return completionHandler(false)
     }
     let handled = appDelegate.quickActionsManager.handleShortCutItem(shortcutItem: shortcutItem)
     completionHandler(handled)
+  }
+
+  private func perform(_ action: AppQuickAction) {
+    guard let url = action.url(infoDictionary: Bundle.main.infoDictionary) else { return }
+    UIApplication.shared.open(url) { opened in
+      guard opened, action == .installLatest else { return }
+      // iOS replaces the app bundle under a running process, which crashes it and
+      // only starts the install once the user leaves the app. Exiting cleanly
+      // after the install prompt is up lets the install begin on its own.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        exit(0)
+      }
+    }
   }
 
   func sceneDidDisconnect(_ scene: UIScene) {
@@ -200,6 +223,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     // Called when the scene has moved from an inactive state to an active state.
     // Use this method to restart any tasks that were paused (or not yet started) when the scene was inactive.
     os_log("sceneDidBecomeActive", log: self.log, type: .info)
+    if let action = pendingAppQuickAction {
+      pendingAppQuickAction = nil
+      perform(action)
+    }
     guard appDelegate.isNormalInteraction else {
       return
     }
@@ -212,6 +239,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     // This may occur due to temporary interruptions (ex. an incoming phone call).
     os_log("sceneWillResignActive", log: self.log, type: .info)
     guard appDelegate.isNormalInteraction else {
+      // No account or library yet: still offer the OTA actions.
+      UIApplication.shared.shortcutItems = QuickActionsHandler.otaShortcutItems()
       return
     }
     appDelegate.quickActionsManager.configureQuickActions()

@@ -72,17 +72,8 @@
 	<array>
 		<string>INPlayMediaIntent</string>
 	</array>
-	<key>UIApplicationShortcutItems</key>
-	<array>
-		<dict>
-			<key>UIApplicationShortcutItemIconSymbolName</key>
-			<string>arrow.down.app</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>Install Latest</string>
-			<key>UIApplicationShortcutItemType</key>
-			<string>InstallLatestAction</string>
-		</dict>
-	</array>
+	<key>AmperfyOTAManifestURL</key>
+	<string>$(AMPERFY_OTA_MANIFEST_URL)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

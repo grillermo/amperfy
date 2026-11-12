@@ -1,26 +1,27 @@
 # frozen_string_literal: true
 
 # The app's version lives in Amperfy.xcodeproj/project.pbxproj, in the Debug and
-# Release buildSettings of the app target (the AmperfyKit and test targets carry
-# their own 1.0 / 1 and are left alone). The app target's blocks are the ones
-# whose PRODUCT_BUNDLE_IDENTIFIER is the app's bundle ID.
+# Release buildSettings of the app target. AmperfyKit and the tests carry their
+# own 1.0 / 1 and are left alone, which is why ./deploy cannot bump every
+# MARKETING_VERSION in the file. The app target's blocks are the ones that use
+# the app's Info.plist (the bundle ID is a $(AMPERFY_BUNDLE_ID) variable now).
 module Versioning
-  BLOCK     = /buildSettings = \{.*?\n\t\t\t\};/m
-  MARKETING = /^(\s*"?MARKETING_VERSION(?:\[sdk=[^\]]+\])?"?\s*=\s*)([\d.]+);/
-  BUILD     = /^(\s*CURRENT_PROJECT_VERSION\s*=\s*)(\d+);/
+  APP_MARKER = "INFOPLIST_FILE = Amperfy/Info.plist;"
+  BLOCK      = /buildSettings = \{.*?\n\t\t\t\};/m
+  MARKETING  = /^(\s*"?MARKETING_VERSION(?:\[sdk=[^\]]+\])?"?\s*=\s*)([\d.]+);/
+  BUILD      = /^(\s*CURRENT_PROJECT_VERSION\s*=\s*)(\d+);/
 
   module_function
 
-  def app_blocks(text, bundle_id)
-    marker = "PRODUCT_BUNDLE_IDENTIFIER = #{bundle_id};"
+  def app_blocks(text, marker: APP_MARKER)
     text.scan(BLOCK).select { |b| b.include?(marker) }
   end
 
-  def read(text, bundle_id:)
-    block = app_blocks(text, bundle_id).first or
-      raise ArgumentError, "no buildSettings with PRODUCT_BUNDLE_IDENTIFIER = #{bundle_id} in project.pbxproj"
-    marketing = block[MARKETING, 2] or raise ArgumentError, "no MARKETING_VERSION for #{bundle_id}"
-    build     = block[BUILD, 2]     or raise ArgumentError, "no CURRENT_PROJECT_VERSION for #{bundle_id}"
+  def read(text, marker: APP_MARKER)
+    block = app_blocks(text, marker: marker).first or
+      raise ArgumentError, "no buildSettings with #{marker} in project.pbxproj"
+    marketing = block[MARKETING, 2] or raise ArgumentError, "no MARKETING_VERSION in the app target"
+    build     = block[BUILD, 2]     or raise ArgumentError, "no CURRENT_PROJECT_VERSION in the app target"
     { marketing: marketing, build: build.to_i }
   end
 
@@ -37,8 +38,7 @@ module Versioning
     end
   end
 
-  def write(text, bundle_id:, version:, build:)
-    marker = "PRODUCT_BUNDLE_IDENTIFIER = #{bundle_id};"
+  def write(text, version:, build:, marker: APP_MARKER)
     text.gsub(BLOCK) do |block|
       next block unless block.include?(marker)
 
