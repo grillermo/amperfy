@@ -33,6 +33,11 @@ class ArtistDetailVC: MultiSourceTableViewController {
   private var optionsButton: UIBarButtonItem!
   private var detailOperationsView: GenericDetailTableHeader?
 
+  /// The albums show as a grid of cover cards, held in a single row of the table
+  private var albumsGridVC: ArtistAlbumsGridVC!
+  private var isAlbumsGridReloadNeeded = false
+  private var lastLayoutWidth: CGFloat = 0
+
   init(account: Account, artist: Artist) {
     self.artist = artist
     super.init(style: .plain, account: account)
@@ -61,7 +66,19 @@ class ArtistDetailVC: MultiSourceTableViewController {
       isGroupedInAlphabeticSections: false
     )
     songsFetchedResultsController.delegate = self
-    tableView.register(nibName: GenericTableCell.typeName)
+    albumsGridVC = ArtistAlbumsGridVC(
+      account: account,
+      albumsFetchedResultsController: albumsFetchedResultsController
+    )
+    addChild(albumsGridVC)
+    albumsGridVC.didMove(toParent: self)
+    tableView.register(
+      ArtistAlbumsGridTableCell.self,
+      forCellReuseIdentifier: ArtistAlbumsGridTableCell.reuseID
+    )
+    resultUpdateHandler?.changesDidEnd = { [weak self] in
+      self?.reloadAlbumsGridIfNeeded()
+    }
     tableView.register(nibName: PlayableTableCell.typeName)
     tableView.reloadOnTextSizeChange()
     tableView.sectionHeaderHeight = 0.0
@@ -101,11 +118,6 @@ class ArtistDetailVC: MultiSourceTableViewController {
 
     containableAtIndexPathCallback = { indexPath in
       switch indexPath.section + 1 {
-      case LibraryElement.Album.rawValue:
-        return self.albumsFetchedResultsController.getWrappedEntity(at: IndexPath(
-          row: indexPath.row,
-          section: 0
-        ))
       case LibraryElement.Song.rawValue:
         return self.songsFetchedResultsController.getWrappedEntity(at: IndexPath(
           row: indexPath.row,
@@ -117,22 +129,6 @@ class ArtistDetailVC: MultiSourceTableViewController {
     }
     playContextAtIndexPathCallback = { indexPath in
       switch indexPath.section + 1 {
-      case LibraryElement.Album.rawValue:
-        let album = self.albumsFetchedResultsController.getWrappedEntity(at: IndexPath(
-          row: indexPath.row,
-          section: 0
-        ))
-        Task { @MainActor in do {
-          try await album.fetch(
-            storage: self.appDelegate.storage,
-            librarySyncer: self.appDelegate.getMeta(self.account.info).librarySyncer,
-            playableDownloadManager: self.appDelegate.getMeta(self.account.info)
-              .playableDownloadManager
-          )
-        } catch {
-          self.appDelegate.eventLogger.report(topic: "Album Sync", error: error)
-        }}
-        return PlayContext(containable: album)
       case LibraryElement.Song.rawValue:
         let songIndexPath = IndexPath(row: indexPath.row, section: 0)
         return self.convertIndexPathToPlayContext(songIndexPath: songIndexPath)
@@ -142,24 +138,6 @@ class ArtistDetailVC: MultiSourceTableViewController {
     }
     swipeCallback = { indexPath, completionHandler in
       switch indexPath.section + 1 {
-      case LibraryElement.Album.rawValue:
-        let album = self.albumsFetchedResultsController.getWrappedEntity(at: IndexPath(
-          row: indexPath.row,
-          section: 0
-        ))
-        Task { @MainActor in
-          do {
-            try await album.fetch(
-              storage: self.appDelegate.storage,
-              librarySyncer: self.appDelegate.getMeta(self.account.info).librarySyncer,
-              playableDownloadManager: self.appDelegate.getMeta(self.account.info)
-                .playableDownloadManager
-            )
-          } catch {
-            self.appDelegate.eventLogger.report(topic: "Album Sync", error: error)
-          }
-          completionHandler(SwipeActionContext(containable: album))
-        }
       case LibraryElement.Song.rawValue:
         let songIndexPath = IndexPath(row: indexPath.row, section: 0)
         let song = self.songsFetchedResultsController.getWrappedEntity(at: songIndexPath)
@@ -205,12 +183,46 @@ class ArtistDetailVC: MultiSourceTableViewController {
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     defer { albumToScrollTo = nil }
-    guard let albumToScrollTo = albumToScrollTo,
-          let indexPath = albumsFetchedResultsController.fetchResultsController
-          .indexPath(forObject: albumToScrollTo.managedObject)
-    else { return }
-    let adjustedIndexPath = IndexPath(row: indexPath.row, section: 1)
-    tableView.scrollToRow(at: adjustedIndexPath, at: .top, animated: true)
+    if let albumToScrollTo, let cardFrame = albumsGridVC.frame(of: albumToScrollTo) {
+      let gridRowFrame = tableView.rectForRow(at: IndexPath(
+        row: 0,
+        section: LibraryElement.Album.rawValue - 1
+      ))
+      tableView.scrollRectToVisible(
+        cardFrame.offsetBy(dx: gridRowFrame.minX, dy: gridRowFrame.minY),
+        animated: true
+      )
+    }
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    // the number of grid columns follows the window width, so the grid row height does too
+    let width = tableView.bounds.width
+    guard width != lastLayoutWidth else { return }
+    lastLayoutWidth = width
+    UIView.performWithoutAnimation {
+      tableView.beginUpdates()
+      tableView.endUpdates()
+    }
+  }
+
+  private var albumsGridHeight: CGFloat {
+    ArtistAlbumsGridVC.height(
+      forWidth: tableView.bounds.width,
+      count: albumsGridVC.albumCount,
+      traits: traitCollection
+    )
+  }
+
+  private func reloadAlbumsGridIfNeeded() {
+    guard isAlbumsGridReloadNeeded else { return }
+    isAlbumsGridReloadNeeded = false
+    albumsGridVC.reload()
+    tableView.reloadSections(
+      IndexSet(integer: LibraryElement.Album.rawValue - 1),
+      with: .none
+    )
   }
 
   func convertIndexPathToPlayContext(songIndexPath: IndexPath) -> PlayContext? {
@@ -254,7 +266,9 @@ class ArtistDetailVC: MultiSourceTableViewController {
   override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
     switch section + 1 {
     case LibraryElement.Album.rawValue:
-      return albumsFetchedResultsController.sections?[0].numberOfObjects ?? 0
+      // the grid row stays even without albums (0 high then), so fetch updates never change
+      // this section's row count
+      return 1
     case LibraryElement.Song.rawValue:
       return songsFetchedResultsController.sections?[0].numberOfObjects ?? 0
     default:
@@ -269,13 +283,13 @@ class ArtistDetailVC: MultiSourceTableViewController {
     -> UITableViewCell {
     switch indexPath.section + 1 {
     case LibraryElement.Album.rawValue:
-      let cell: GenericTableCell = dequeueCell(for: tableView, at: indexPath)
-      let album = albumsFetchedResultsController.getWrappedEntity(at: IndexPath(
-        row: indexPath.row,
-        section: 0
-      ))
-      cell.display(container: album, rootView: self)
-      return cell
+      let gridCell = tableView.dequeueReusableCell(
+        withIdentifier: ArtistAlbumsGridTableCell.reuseID,
+        for: indexPath
+      ) as! ArtistAlbumsGridTableCell
+      gridCell.embed(albumsGridVC.view)
+      albumsGridVC.reload()
+      return gridCell
     case LibraryElement.Song.rawValue:
       let cell: PlayableTableCell = dequeueCell(for: tableView, at: indexPath)
       let song = songsFetchedResultsController.getWrappedEntity(at: IndexPath(
@@ -313,7 +327,7 @@ class ArtistDetailVC: MultiSourceTableViewController {
     -> CGFloat {
     switch indexPath.section + 1 {
     case LibraryElement.Album.rawValue:
-      return GenericTableCell.rowHeight
+      return albumsGridHeight
     case LibraryElement.Song.rawValue:
       return PlayableTableCell.rowHeight
     default:
@@ -328,7 +342,7 @@ class ArtistDetailVC: MultiSourceTableViewController {
     -> CGFloat {
     switch indexPath.section + 1 {
     case LibraryElement.Album.rawValue:
-      return GenericTableCell.rowHeight
+      return albumsGridHeight
     case LibraryElement.Song.rawValue:
       return PlayableTableCell.rowHeight
     default:
@@ -337,19 +351,7 @@ class ArtistDetailVC: MultiSourceTableViewController {
   }
 
   override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-    switch indexPath.section + 1 {
-    case LibraryElement.Album.rawValue:
-      let album = albumsFetchedResultsController.getWrappedEntity(at: IndexPath(
-        row: indexPath.row,
-        section: 0
-      ))
-      navigationController?.pushViewController(
-        AppStoryboard.Main.segueToAlbumDetail(account: account, album: album),
-        animated: true
-      )
-    case LibraryElement.Song.rawValue: break
-    default: break
-    }
+    // albums open from their grid card, songs play from their cell
   }
 
   override func updateSearchResults(for searchController: UISearchController) {
@@ -377,7 +379,9 @@ class ArtistDetailVC: MultiSourceTableViewController {
     var section = 0
     switch controller {
     case albumsFetchedResultsController.fetchResultsController:
-      section = LibraryElement.Album.rawValue - 1
+      // the grid reloads as a whole once the changes end (reloadAlbumsGridIfNeeded)
+      isAlbumsGridReloadNeeded = true
+      return
     case songsFetchedResultsController.fetchResultsController:
       section = LibraryElement.Song.rawValue - 1
     default:
@@ -400,4 +404,225 @@ class ArtistDetailVC: MultiSourceTableViewController {
     atSectionIndex sectionIndex: Int,
     for type: NSFetchedResultsChangeType
   ) {}
+}
+
+
+// MARK: - ArtistAlbumsGridVC
+
+/// The artist's albums as square cover cards with the title below, the same cards Home uses.
+/// It does not scroll: it is as tall as all its rows and lives in one row of the artist table.
+final class ArtistAlbumsGridVC: UICollectionViewController {
+  static let itemWidth: CGFloat = 160.0
+  private static let interItemSpacing: CGFloat = 12.0
+  private static let lineSpacing: CGFloat = 16.0
+  private static let insets = UIEdgeInsets(top: 8, left: 16, bottom: 16, right: 16)
+
+  private let account: Account
+  private let albumsFetchedResultsController: ArtistAlbumsItemsFetchedResultsController
+
+  init(
+    account: Account,
+    albumsFetchedResultsController: ArtistAlbumsItemsFetchedResultsController
+  ) {
+    self.account = account
+    self.albumsFetchedResultsController = albumsFetchedResultsController
+    let layout = UICollectionViewFlowLayout()
+    layout.scrollDirection = .vertical
+    layout.minimumInteritemSpacing = Self.interItemSpacing
+    layout.minimumLineSpacing = Self.lineSpacing
+    layout.sectionInset = Self.insets
+    super.init(collectionViewLayout: layout)
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  var albumCount: Int {
+    albumsFetchedResultsController.sections?.first?.numberOfObjects ?? 0
+  }
+
+  private static func itemHeight(for traits: UITraitCollection) -> CGFloat {
+    itemWidth + AlbumCollectionCell.labelAreaHeight(for: traits, defaultHeight: 50.0)
+  }
+
+  private static func columns(forWidth width: CGFloat) -> Int {
+    let available = width - insets.left - insets.right + interItemSpacing
+    return max(1, Int(available / (itemWidth + interItemSpacing)))
+  }
+
+  /// Height the grid needs to show `count` albums at the given width
+  static func height(forWidth width: CGFloat, count: Int, traits: UITraitCollection) -> CGFloat {
+    guard count > 0 else { return 0 }
+    let columns = columns(forWidth: width)
+    let rows = (count + columns - 1) / columns
+    return insets.top + insets.bottom + CGFloat(rows) * itemHeight(for: traits) +
+      CGFloat(rows - 1) * lineSpacing
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    collectionView.backgroundColor = .clear
+    collectionView.isScrollEnabled = false
+    collectionView.register(
+      UINib(nibName: AlbumCollectionCell.typeName, bundle: .main),
+      forCellWithReuseIdentifier: AlbumCollectionCell.typeName
+    )
+    updateItemSize()
+    registerForTraitChanges(
+      [UITraitPreferredContentSizeCategory.self],
+      handler: { (self: Self, _: UITraitCollection) in
+        self.updateItemSize()
+      }
+    )
+  }
+
+  private func updateItemSize() {
+    guard let layout = collectionView.collectionViewLayout as? UICollectionViewFlowLayout
+    else { return }
+    layout.itemSize = CGSize(width: Self.itemWidth, height: Self.itemHeight(for: traitCollection))
+    layout.invalidateLayout()
+  }
+
+  func reload() {
+    collectionView.reloadData()
+  }
+
+  /// Frame of the album's card in the grid's coordinates
+  func frame(of album: Album) -> CGRect? {
+    guard let indexPath = albumsFetchedResultsController.fetchResultsController
+      .indexPath(forObject: album.managedObject)
+    else { return nil }
+    collectionView.layoutIfNeeded()
+    return collectionView.layoutAttributesForItem(at: indexPath)?.frame
+  }
+
+  private func album(at indexPath: IndexPath) -> Album {
+    albumsFetchedResultsController.getWrappedEntity(at: IndexPath(row: indexPath.item, section: 0))
+  }
+
+  override func collectionView(
+    _ collectionView: UICollectionView,
+    numberOfItemsInSection section: Int
+  )
+    -> Int {
+    albumCount
+  }
+
+  override func collectionView(
+    _ collectionView: UICollectionView,
+    cellForItemAt indexPath: IndexPath
+  )
+    -> UICollectionViewCell {
+    let cell = collectionView.dequeueReusableCell(
+      withReuseIdentifier: AlbumCollectionCell.typeName,
+      for: indexPath
+    ) as! AlbumCollectionCell
+    cell.display(
+      container: album(at: indexPath),
+      rootView: self,
+      itemWidth: Self.itemWidth,
+      initialIndexPath: indexPath
+    )
+    // the artist is the page itself, so only the album title goes below the cover
+    cell.subtitleLabel.isHidden = true
+    return cell
+  }
+
+  override func collectionView(
+    _ collectionView: UICollectionView,
+    didSelectItemAt indexPath: IndexPath
+  ) {
+    collectionView.deselectItem(at: indexPath, animated: false)
+    navigationController?.pushViewController(
+      AppStoryboard.Main.segueToAlbumDetail(account: account, album: album(at: indexPath)),
+      animated: true
+    )
+  }
+
+  override func collectionView(
+    _ collectionView: UICollectionView,
+    contextMenuConfigurationForItemAt indexPath: IndexPath,
+    point: CGPoint
+  )
+    -> UIContextMenuConfiguration? {
+    let album = album(at: indexPath)
+    let rootView: UIViewController = parent ?? self
+    let identifier = NSString(string: TableViewPreviewInfo(
+      playableContainerIdentifier: album.containerIdentifier,
+      indexPath: indexPath
+    ).asJSONString())
+    return UIContextMenuConfiguration(identifier: identifier, previewProvider: {
+      let vc = EntityPreviewVC()
+      vc.display(container: album, on: rootView)
+      Task { @MainActor in
+        do {
+          try await album.fetch(
+            storage: self.appDelegate.storage,
+            librarySyncer: self.appDelegate.getMeta(self.account.info).librarySyncer,
+            playableDownloadManager: self.appDelegate.getMeta(self.account.info)
+              .playableDownloadManager
+          )
+        } catch {
+          self.appDelegate.eventLogger.report(topic: "Preview Sync", error: error)
+        }
+        vc.refresh()
+      }
+      return vc
+    }) { _ in
+      EntityPreviewActionBuilder(
+        container: album,
+        on: rootView,
+        playContextCb: { PlayContext(containable: album) }
+      ).createMenu()
+    }
+  }
+
+  override func collectionView(
+    _ collectionView: UICollectionView,
+    willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
+    animator: UIContextMenuInteractionCommitAnimating
+  ) {
+    let rootView: UIViewController = parent ?? self
+    animator.addCompletion {
+      if let identifier = configuration.identifier as? String,
+         let tvPreviewInfo = TableViewPreviewInfo.create(fromIdentifier: identifier),
+         let containerIdentifier = tvPreviewInfo.playableContainerIdentifier,
+         let container = self.appDelegate.storage.main.library
+         .getContainer(identifier: containerIdentifier) {
+        EntityPreviewActionBuilder(container: container, on: rootView)
+          .performPreviewTransition()
+      }
+    }
+  }
+}
+
+// MARK: - ArtistAlbumsGridTableCell
+
+/// Table row that holds the albums grid view
+final class ArtistAlbumsGridTableCell: UITableViewCell {
+  static let reuseID = "ArtistAlbumsGridTableCell"
+
+  override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+    super.init(style: style, reuseIdentifier: reuseIdentifier)
+    selectionStyle = .none
+    backgroundColor = .clear
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  func embed(_ view: UIView) {
+    guard view.superview !== contentView else { return }
+    view.removeFromSuperview()
+    view.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(view)
+    NSLayoutConstraint.activate([
+      view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+      view.topAnchor.constraint(equalTo: contentView.topAnchor),
+      view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+    ])
+  }
 }
