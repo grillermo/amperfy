@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Ships both builds of the app from this Mac in one go:
+#
+#   1. build-ios.sh   -> ./deploy: bumps the version, builds the ad hoc .ipa,
+#                        publishes it over the air to files.chiq.me, commits,
+#                        tags and pushes (see scripts/deploy/README.md)
+#   2. build-macos.sh -> builds the Mac Catalyst app and installs it to
+#                        ~/Applications/Amperfy.app on this Mac
+#
+# They run one after the other, iOS first, so the Mac app is built from the
+# release commit and carries the same version. Running them side by side would
+# race on project.pbxproj (./deploy bumps it and restores it on failure) and on
+# the shared caches ./deploy cleans up after itself.
+#
+# The Mac build runs even when the iOS one fails, so a broken signing setup
+# doesn't keep the Mac app from updating. The script exits non-zero unless
+# both succeed, and ends with a line saying which one failed.
+#
+# Usage: ./build [patch|minor|major|X.Y.Z] [--yes] [--summary "..."] [--note "..."]...
+#        (every argument goes to build-ios.sh, i.e. ./deploy)
+#        AMPERFY_SKIP_IOS=1 / AMPERFY_SKIP_MACOS=1 run only the other half.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT" || exit 1
+
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+
+ios_status=skipped
+macos_status=skipped
+start=$(date +%s)
+
+if [ "${AMPERFY_SKIP_IOS:-}" != "1" ]; then
+  bold "==> [1/2] iOS: OTA deploy (build-ios.sh)"
+  if "$ROOT/build-ios.sh" "$@"; then ios_status=ok; else ios_status="failed ($?)"; fi
+fi
+
+if [ "${AMPERFY_SKIP_MACOS:-}" != "1" ]; then
+  bold "==> [2/2] macOS: build and install on this Mac (build-macos.sh)"
+  if "$ROOT/build-macos.sh"; then macos_status=ok; else macos_status="failed ($?)"; fi
+fi
+
+elapsed=$(( $(date +%s) - start ))
+bold "==> Done in $((elapsed / 60))m$((elapsed % 60))s: iOS $ios_status, macOS $macos_status"
+
+case "$ios_status $macos_status" in
+  *failed*) exit 1 ;;
+esac

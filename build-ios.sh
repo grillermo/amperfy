@@ -5,10 +5,12 @@
 #
 # This script makes sure Xcode's iOS tooling is in place, then hands over to
 # ./deploy, which bumps the version, builds, publishes, commits, tags and pushes
-# to the fork. Run it on the macmini: that is where files.chiq.me serves from.
+# to the fork. It runs on any Mac whose Xcode is signed in to the team and that
+# has a file_server token (see scripts/deploy/README.md); ./build runs it
+# together with build-macos.sh.
 #
 # Nothing is left on this Mac but the published files: the build lives in
-# ./build and is deleted when ./deploy exits, success or failure.
+# tmp/ios-ota and is deleted when ./deploy exits, success or failure.
 #
 # Usage: ./build-ios.sh [patch|minor|major|X.Y.Z] [--yes] [--summary "..."] [--note "..."]...
 #        (every argument goes to ./deploy; see its header)

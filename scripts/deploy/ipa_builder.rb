@@ -22,7 +22,7 @@
 # does not have it, so Amperfy/Amperfy.entitlements drops it in this fork.
 #
 # Nothing stays on this Mac. Every artifact (DerivedData, resolved packages,
-# the archive, the export's logs in TMPDIR, the .ipa) lives in one work dir
+# the archive, the .ipa) lives in one work dir
 # under tmp/ios-ota/ that ../../deploy deletes on exit, success or failure, along with
 # any provisioning profile Xcode downloaded for the export. The SwiftFormat build
 # phase is skipped (AMPERFY_SKIP_SWIFTFORMAT): its `swift run` fills SwiftPM's
@@ -233,29 +233,38 @@ module IpaBuilder
   # build-macos.sh uses its own tmp/macos/, so ../../build can run both and
   # neither cleanup touches the other's files. `clean_up!` deletes it.
   WORK_ROOT = File.join(REPO_ROOT, "tmp", "ios-ota")
+  USER_CACHE_DIR = `getconf DARWIN_USER_CACHE_DIR`.strip
+  USER_TEMP_DIR  = `getconf DARWIN_USER_TEMP_DIR`.strip
+
   # Shared places xcodebuild writes to even with every path flag pointed at
-  # WORK_ROOT: provisioning profiles from -allowProvisioningUpdates, SwiftPM's
-  # manifest cache, Xcode's per-version plug-in caches. Other projects use them
-  # too, so they are never wiped: `clean_up!` deletes only what appeared in them
-  # during this run. (Rows added to SwiftPM's existing manifest.db stay; that
-  # file is shared and cannot be split by project.)
+  # WORK_ROOT: provisioning profiles and team capabilities from
+  # -allowProvisioningUpdates, xcodebuild's HTTP cache, SwiftPM's manifest
+  # cache, clang's module cache (manifest and export compiles), Xcode's
+  # per-version plug-in caches. Other projects use them too, so they are never
+  # wiped: `clean_up!` deletes only what appeared in them during this run, and
+  # the dir itself if the run created it. (Rows added to existing databases --
+  # SwiftPM's manifest.db, xcodebuild's Cache.db -- stay; they are shared and
+  # cannot be split by project.)
   SHARED_CACHE_DIRS = [
     "~/Library/Developer/Xcode/UserData/Provisioning Profiles",
+    "~/Library/Developer/Xcode/UserData/Capabilities",
+    "~/Library/Caches/com.apple.dt.xcodebuild",
     "~/Library/MobileDevice/Provisioning Profiles",
     "~/Library/Caches/org.swift.swiftpm",
     "~/.swiftpm",
-    File.join(`getconf DARWIN_USER_CACHE_DIR`.strip, "com.apple.DeveloperTools"),
-    File.join(`getconf DARWIN_USER_CACHE_DIR`.strip, "com.apple.dt.AssetCatalogAgent-AssetRuntime"),
+    File.join(USER_CACHE_DIR, "com.apple.DeveloperTools"),
+    File.join(USER_CACHE_DIR, "com.apple.dt.AssetCatalogAgent-AssetRuntime"),
+    File.join(USER_CACHE_DIR, "clang", "ModuleCache"),
   ].map { |d| File.expand_path(d) }.freeze
 
   # When this run started. ../../build-ios.sh sets AMPERFY_RUN_STARTED before
   # its own xcodebuild calls (they create caches too); otherwise it is now.
   RUN_STARTED = Time.at((ENV["#{ENV_PREFIX}_RUN_STARTED"] || Time.now.to_i).to_i)
 
-  # Entries in SHARED_CACHE_DIRS created since RUN_STARTED.
+  # Entries in SHARED_CACHE_DIRS created since RUN_STARTED, the dirs included.
   def shared_cache_entries_added
     SHARED_CACHE_DIRS.flat_map do |dir|
-      Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH).select do |path|
+      [dir, *Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH)].select do |path|
         !path.end_with?("/.", "/..") && File.lstat(path).birthtime >= RUN_STARTED
       rescue SystemCallError, NotImplementedError
         false
@@ -295,20 +304,32 @@ module IpaBuilder
     []
   end
 
-  # Xcode's helper services (ibtoold for storyboards, the asset catalog agent
-  # for the app icon) run under launchd with the system TMPDIR, not ours. Only
-  # their dirs born this run go: ibtoold-<pid>/, and <UUID>/ dirs holding a
-  # render of our icon. The rest of that TMPDIR belongs to other apps.
-  def xcode_service_temp_dirs
-    tmp = `getconf DARWIN_USER_TEMP_DIR`.strip
-    return [] if tmp.empty?
+  # What Xcode leaves in the system TMPDIR. Its helper services (ibtoold for
+  # storyboards, the asset catalog agent for the app icon) run under launchd
+  # with that TMPDIR, and -exportArchive and codesign use it whatever TMPDIR
+  # says. The rest of it belongs to other apps, so only these, born this run:
+  TEMP_LEFTOVERS = [
+    /\Aibtoold-\d+\z/,                                   # storyboard compiler
+    /\A#{APP_NAME}_[\d-]+_[\d.-]+\.xcdistributionlogs\z/, # -exportArchive's logs
+    /\AXcodeDistPipeline\./,                             # -exportArchive's staging
+    /\Acms~~~/,                                           # codesign's signatures
+    /\Axcrun_db\z/,                                       # xcrun's lookup cache
+  ].freeze
+  UUID_NAME = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
 
-    Dir.children(tmp).map { |name| File.join(tmp, name) }.select do |dir|
-      next false unless File.directory?(dir) && !File.symlink?(dir)
-      next false unless File.lstat(dir).birthtime >= RUN_STARTED
+  def xcode_temp_leftovers
+    return [] if USER_TEMP_DIR.empty?
 
-      File.basename(dir).start_with?("ibtoold-") ||
-        Dir.children(dir).any? { |f| f.start_with?("#{APP_NAME}AppIcon") }
+    Dir.children(USER_TEMP_DIR).map { |name| File.join(USER_TEMP_DIR, name) }.select do |path|
+      next false if File.symlink?(path) || File.lstat(path).birthtime < RUN_STARTED
+
+      name = File.basename(path)
+      next true if TEMP_LEFTOVERS.any? { |re| re.match?(name) }
+
+      # The asset catalog agent renders our icon into a <UUID>/ dir and
+      # leaves the dir behind, with or without the render.
+      UUID_NAME.match?(name) && File.directory?(path) &&
+        Dir.children(path).all? { |f| f.start_with?("#{APP_NAME}AppIcon") }
     rescue SystemCallError, NotImplementedError
       false
     end
@@ -322,7 +343,7 @@ module IpaBuilder
       nil # absent, or someone put something in it
     end
 
-    xcode_service_temp_dirs.each { |dir| FileUtils.rm_rf(dir) }
+    xcode_temp_leftovers.each { |path| FileUtils.rm_rf(path) }
 
     package_identities.each do |id|
       dia = File.join(MANIFEST_DIAGNOSTICS_DIR, "#{id}.dia")
