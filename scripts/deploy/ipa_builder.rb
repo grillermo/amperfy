@@ -22,8 +22,8 @@
 # does not have it, so Amperfy/Amperfy.entitlements drops it in this fork.
 #
 # Nothing stays on this Mac. Every artifact (DerivedData, resolved packages,
-# the archive, the export's logs in TMPDIR, the .ipa) lives in one work dir
-# under build/ that ../../deploy deletes on exit, success or failure, along with
+# the archive, the .ipa) lives in one work dir
+# under tmp/ios-ota/ that ../../deploy deletes on exit, success or failure, along with
 # any provisioning profile Xcode downloaded for the export. The SwiftFormat build
 # phase is skipped (AMPERFY_SKIP_SWIFTFORMAT): its `swift run` fills SwiftPM's
 # caches in ~/Library, outside anything we could clean.
@@ -229,31 +229,42 @@ module IpaBuilder
     path
   end
 
-  # Where every build artifact goes: build/ in the repo (gitignored), the same
-  # place build-macos.sh uses. `clean_up!` deletes it.
-  WORK_ROOT = File.join(REPO_ROOT, "build")
+  # Where every build artifact goes: tmp/ios-ota/ in the repo (gitignored).
+  # build-macos.sh uses its own tmp/macos/, so ../../build can run both and
+  # neither cleanup touches the other's files. `clean_up!` deletes it.
+  WORK_ROOT = File.join(REPO_ROOT, "tmp", "ios-ota")
+  USER_CACHE_DIR = `getconf DARWIN_USER_CACHE_DIR`.strip
+  USER_TEMP_DIR  = `getconf DARWIN_USER_TEMP_DIR`.strip
+
   # Shared places xcodebuild writes to even with every path flag pointed at
-  # WORK_ROOT: provisioning profiles from -allowProvisioningUpdates, SwiftPM's
-  # manifest cache, Xcode's per-version plug-in caches. Other projects use them
-  # too, so they are never wiped: `clean_up!` deletes only what appeared in them
-  # during this run. (Rows added to SwiftPM's existing manifest.db stay; that
-  # file is shared and cannot be split by project.)
+  # WORK_ROOT: provisioning profiles and team capabilities from
+  # -allowProvisioningUpdates, xcodebuild's HTTP cache, SwiftPM's manifest
+  # cache, clang's module cache (manifest and export compiles), Xcode's
+  # per-version plug-in caches. Other projects use them too, so they are never
+  # wiped: `clean_up!` deletes only what appeared in them during this run, and
+  # the dir itself if the run created it. (Rows added to existing databases --
+  # SwiftPM's manifest.db, xcodebuild's Cache.db -- stay; they are shared and
+  # cannot be split by project.)
   SHARED_CACHE_DIRS = [
     "~/Library/Developer/Xcode/UserData/Provisioning Profiles",
+    "~/Library/Developer/Xcode/UserData/Capabilities",
+    "~/Library/Caches/com.apple.dt.xcodebuild",
     "~/Library/MobileDevice/Provisioning Profiles",
     "~/Library/Caches/org.swift.swiftpm",
     "~/.swiftpm",
-    File.join(`getconf DARWIN_USER_CACHE_DIR`.strip, "com.apple.DeveloperTools"),
+    File.join(USER_CACHE_DIR, "com.apple.DeveloperTools"),
+    File.join(USER_CACHE_DIR, "com.apple.dt.AssetCatalogAgent-AssetRuntime"),
+    File.join(USER_CACHE_DIR, "clang", "ModuleCache"),
   ].map { |d| File.expand_path(d) }.freeze
 
   # When this run started. ../../build-ios.sh sets AMPERFY_RUN_STARTED before
   # its own xcodebuild calls (they create caches too); otherwise it is now.
   RUN_STARTED = Time.at((ENV["#{ENV_PREFIX}_RUN_STARTED"] || Time.now.to_i).to_i)
 
-  # Entries in SHARED_CACHE_DIRS created since RUN_STARTED.
+  # Entries in SHARED_CACHE_DIRS created since RUN_STARTED, the dirs included.
   def shared_cache_entries_added
     SHARED_CACHE_DIRS.flat_map do |dir|
-      Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH).select do |path|
+      [dir, *Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH)].select do |path|
         !path.end_with?("/.", "/..") && File.lstat(path).birthtime >= RUN_STARTED
       rescue SystemCallError, NotImplementedError
         false
@@ -266,6 +277,78 @@ module IpaBuilder
   # SHARED_CACHE_DIRS (the next run fetches or rebuilds it again).
   def clean_up!
     FileUtils.rm_rf(WORK_ROOT)
+    remove_tmp_dir_if_empty
+    clean_shared_caches!
+  end
+
+  # tmp/ holds only the work dirs of ./deploy and ../../build-macos.sh; once
+  # both are gone it goes too (Dir.rmdir fails, harmlessly, while one runs).
+  def remove_tmp_dir_if_empty
+    Dir.rmdir(File.dirname(WORK_ROOT))
+  rescue SystemCallError
+    nil
+  end
+
+  # SwiftPM rewrites a <package identity>.dia here on every manifest load, so
+  # the file is usually older than the run and the birth-time rule above misses
+  # it. Ours are the ones named after a package in Package.resolved that this
+  # run touched.
+  MANIFEST_DIAGNOSTICS_DIR = File.expand_path("~/Library/Caches/org.swift.swiftpm/manifests/ManifestLoading")
+  SWIFTPM_DIR = File.join(REPO_ROOT, PROJECT, "project.xcworkspace", "xcshareddata", "swiftpm")
+  # Empty dir xcodebuild creates in the repo; git does not show it.
+  SWIFTPM_CONFIGURATION_DIR = File.join(SWIFTPM_DIR, "configuration")
+
+  def package_identities
+    File.read(File.join(SWIFTPM_DIR, "Package.resolved")).scan(/"identity"\s*:\s*"([^"]+)"/).flatten
+  rescue SystemCallError
+    []
+  end
+
+  # What Xcode leaves in the system TMPDIR. Its helper services (ibtoold for
+  # storyboards, the asset catalog agent for the app icon) run under launchd
+  # with that TMPDIR, and -exportArchive and codesign use it whatever TMPDIR
+  # says. The rest of it belongs to other apps, so only these, born this run:
+  TEMP_LEFTOVERS = [
+    /\Aibtoold-\d+\z/,                                   # storyboard compiler
+    /\A#{APP_NAME}_[\d-]+_[\d.-]+\.xcdistributionlogs\z/, # -exportArchive's logs
+    /\AXcodeDistPipeline\./,                             # -exportArchive's staging
+    /\Acms~~~/,                                           # codesign's signatures
+    /\Axcrun_db\z/,                                       # xcrun's lookup cache
+  ].freeze
+  UUID_NAME = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+
+  def xcode_temp_leftovers
+    return [] if USER_TEMP_DIR.empty?
+
+    Dir.children(USER_TEMP_DIR).map { |name| File.join(USER_TEMP_DIR, name) }.select do |path|
+      next false if File.symlink?(path) || File.lstat(path).birthtime < RUN_STARTED
+
+      name = File.basename(path)
+      next true if TEMP_LEFTOVERS.any? { |re| re.match?(name) }
+
+      # The asset catalog agent renders our icon into a <UUID>/ dir and
+      # leaves the dir behind, with or without the render.
+      UUID_NAME.match?(name) && File.directory?(path) &&
+        Dir.children(path).all? { |f| f.start_with?("#{APP_NAME}AppIcon") }
+    rescue SystemCallError, NotImplementedError
+      false
+    end
+  end
+
+  # Also run by ../../build-macos.sh on exit, with its own RUN_STARTED.
+  def clean_shared_caches!
+    begin
+      Dir.rmdir(SWIFTPM_CONFIGURATION_DIR)
+    rescue SystemCallError
+      nil # absent, or someone put something in it
+    end
+
+    xcode_temp_leftovers.each { |path| FileUtils.rm_rf(path) }
+
+    package_identities.each do |id|
+      dia = File.join(MANIFEST_DIAGNOSTICS_DIR, "#{id}.dia")
+      FileUtils.rm_f(dia) if File.file?(dia) && File.mtime(dia) >= RUN_STARTED
+    end
 
     added = shared_cache_entries_added
     # Deepest first, so a new directory is empty by the time it is removed.
@@ -296,11 +379,13 @@ module IpaBuilder
     FileUtils.mkdir_p(WORK_ROOT)
     work    = Dir.mktmpdir("#{APP_NAME}-ipa-", WORK_ROOT)
     archive = File.join(work, "#{APP_NAME}.xcarchive")
-    # xcodebuild -exportArchive writes its IDEDistribution logs to TMPDIR, so
-    # point that into the work dir too.
+    # The xcodebuild calls get a TMPDIR in the work dir, set on their command
+    # line only: ENV["TMPDIR"] would outlive the work dir, which clean_up!
+    # deletes before ../../deploy commits, and git's SSH commit signing writes
+    # its temp file to TMPDIR ("could not create temporary file").
     tmp = File.join(work, "tmp")
     FileUtils.mkdir_p(tmp)
-    ENV["TMPDIR"] = tmp
+    tmpdir = "TMPDIR=#{Shellwords.escape(tmp)} "
     # Keeps DerivedData, the resolved Swift packages and their cache out of
     # ~/Library, and the SwiftFormat phase from building swiftformat there.
     contained = "-derivedDataPath #{Shellwords.escape(File.join(work, "DerivedData"))} " \
@@ -317,7 +402,7 @@ module IpaBuilder
 
     step "Archiving (xcodebuild)#{unsigned? ? ' [UNSIGNED]' : ''}"
     run(
-      "xcodebuild " \
+      "#{tmpdir}xcodebuild " \
       "-project #{Shellwords.escape(PROJECT)} " \
       "-scheme #{Shellwords.escape(SCHEME)} " \
       "-configuration Release " \
@@ -339,7 +424,7 @@ module IpaBuilder
     step "Exporting signed .ipa (ad hoc)"
     options = export_options_plist(File.join(work, "ExportOptions.plist"), manifest: manifest)
     run(
-      "xcodebuild -exportArchive " \
+      "#{tmpdir}xcodebuild -exportArchive " \
       "-archivePath #{Shellwords.escape(archive)} " \
       "-exportPath #{Shellwords.escape(work)} " \
       "-exportOptionsPlist #{Shellwords.escape(options)} " \

@@ -10,6 +10,8 @@
 #   2. build an ad-hoc-signed .ipa + its OTA manifest   (scripts/deploy/ipa_builder.rb)
 #   3. publish the .ipa, icon, manifest and install page to AMPERFY_UPLOAD_BASE
 #   4. commit the bump, tag amperfy-ota-vX.Y.Z, and push master to `github` (the fork)
+#   5. build the Mac Catalyst app and install it on this Mac (../build-macos.sh;
+#      AMPERFY_SKIP_MACOS=1 skips it)
 #
 # The install page URL never changes, so a Home Screen bookmark on the device
 # always installs the newest release. It is printed at the end.
@@ -29,18 +31,18 @@
 # --summary is a one-line headline, --note is repeatable and becomes a bullet.
 # With neither, the notes come from commit subjects since the last release tag.
 #
-# Setup (both files gitignored):
-#   .env                    AMPERFY_UPLOAD_BASE=https://files.chiq.me
-#                           optional: AMPERFY_PUBLISH_DIR, AMPERFY_TEAM_ID, AMPERFY_DEVLOG_URL
+# Setup (both files gitignored, both optional):
+#   .env                    AMPERFY_UPLOAD_BASE (default https://files.chiq.me),
+#                           AMPERFY_PUBLISH_DIR, AMPERFY_TEAM_ID, AMPERFY_DEVLOG_URL
 #   Config/Local.xcconfig   DEVELOPMENT_TEAM and AMPERFY_BUNDLE_ID, overriding the
 #                           committed defaults in Config/Amperfy.xcconfig
 #
-# The file_server service behind AMPERFY_UPLOAD_BASE runs on the macmini, so
-# releases are published by writing into the files/ directory it serves rather
-# than over HTTP (see scripts/deploy/uploader.rb). Run this on the macmini.
+# Runs on any Mac with Xcode signed in to the team: the files are uploaded to
+# file_server with the token its MCP saved in ~/.config/file_server/token, over
+# the LAN at home and through files.chiq.me elsewhere (scripts/deploy/uploader.rb).
 #
 # Nothing is left on this Mac but the published files: the build happens in
-# build/ and is deleted on exit, whatever the outcome (see IpaBuilder.clean_up!).
+# tmp/ios-ota/ and is deleted on exit, whatever the outcome (IpaBuilder.clean_up!).
 #
 # AMPERFY_UNSIGNED=1 builds an unsigned Payload/ zip instead, for when signing is
 # broken and you still need a binary.
@@ -131,14 +133,14 @@ NOTES   = take_option(ARGV, "--note", "--notes", "-n")
 # --- preflight ---------------------------------------------------------------
 
 # First of all, so every way out -- a failed check, a failed build, Ctrl-C --
-# deletes build/ and the caches this run created (IpaBuilder.clean_up!).
+# deletes tmp/ios-ota/ and the caches this run created (IpaBuilder.clean_up!).
 at_exit { B.clean_up! }
 
 if DEVLOG && !File.exist?(File.join(REPO_ROOT, "scripts/devlog/server.py"))
   B.die("--devlog needs DevLog in the app and scripts/devlog/server.py; this app has neither yet")
 end
 
-Uploader.check_publish_dir! # dies early if the service's files/ dir is missing
+PUBLISH_TARGET = Uploader.check! # dies early without a token or a reachable file_server
 B.ensure_codesign_can_sign! # unlocks the keychain now, not after a long compile
 B.die("icon not found: #{ICON_SOURCE} (set ICON_SOURCE in scripts/deploy/ipa_builder.rb)") unless File.file?(ICON_SOURCE)
 
@@ -210,6 +212,7 @@ puts B.bold("\n==> Releasing #{APP_NAME} (OTA) #{current} -> #{version} (build #
 puts B.bold("\n    What's New:")
 puts DESCRIPTION.lines.map { |l| "      #{l}" }.join
 puts "\n    Install page: #{INSTALL_URL}"
+puts "    Publishing to: #{PUBLISH_TARGET}"
 
 unless ASSUME_YES
   print "\n    Continue? [y/N] "
@@ -238,6 +241,9 @@ at_exit do
   originals.each do |file, content|
     content.nil? ? FileUtils.rm_f(file) : File.write(file, content)
   end
+  # A failed `git commit` leaves the bump staged; unstage it too, or the next
+  # run's clean-tree check fails.
+  system("git", "reset", "-q", "--", *MUTATED_FILES, chdir: REPO_ROOT)
 end
 
 # Only the app target: AmperfyKit and the tests keep their own 1.0 / 1.
@@ -394,3 +400,15 @@ puts B.bold("\n    Install from Safari on the device:")
 puts B.bold("    #{INSTALL_URL}")
 puts "    Manifest: #{MANIFEST_URL}"
 puts "\n    Add it to the Home Screen once; it always installs the newest release."
+
+# --- Mac app -----------------------------------------------------------------
+
+# A release also replaces the Mac Catalyst app on this Mac (~/Applications),
+# built from the release commit so both apps carry the same version.
+# AMPERFY_SKIP_MACOS=1 skips it (../build sets it and runs build-macos.sh
+# itself, so the Mac app updates even when the iOS release fails).
+unless B.env("SKIP_MACOS") == "1"
+  B.step "Building and installing the Mac app on this Mac (build-macos.sh)"
+  system(File.join(REPO_ROOT, "build-macos.sh"), chdir: REPO_ROOT) or
+    B.die("the iOS release is out, but the Mac app failed to build or install; re-run ./build-macos.sh")
+end
