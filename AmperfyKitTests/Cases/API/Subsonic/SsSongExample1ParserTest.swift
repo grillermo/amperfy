@@ -62,6 +62,7 @@ class SsSongExample1ParserTest: AbstractSsParserTest {
     XCTAssertEqual(song.account?.userHash, TestAccountInfo.test1UserHash)
     XCTAssertEqual(song.id, "71463")
     XCTAssertEqual(song.title, "The Jack")
+    XCTAssertEqual(song.playCount, 12)
     XCTAssertEqual(song.rating, 0)
     XCTAssertEqual(song.artist?.account?.serverHash, TestAccountInfo.test1ServerHash)
     XCTAssertEqual(song.artist?.account?.userHash, TestAccountInfo.test1UserHash)
@@ -99,6 +100,7 @@ class SsSongExample1ParserTest: AbstractSsParserTest {
     XCTAssertEqual(song.account?.userHash, TestAccountInfo.test1UserHash)
     XCTAssertEqual(song.id, "71458")
     XCTAssertEqual(song.title, "It's A Long Way To The Top")
+    XCTAssertEqual(song.playCount, 0) // no playCount attribute
     XCTAssertEqual(song.rating, 1)
     XCTAssertEqual(song.artist?.account?.serverHash, TestAccountInfo.test1ServerHash)
     XCTAssertEqual(song.artist?.account?.userHash, TestAccountInfo.test1UserHash)

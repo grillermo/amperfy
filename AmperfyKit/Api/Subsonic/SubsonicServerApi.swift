@@ -723,6 +723,22 @@ final class SubsonicServerApi: URLCleanser, Sendable {
     }
   }
 
+  /// All songs, a page at a time: an empty search3 query matches everything on Navidrome
+  /// and other OpenSubsonic servers.
+  public func requestAllSongs(offset: Int, count: Int) async throws -> APIDataResponse {
+    try await request { version in
+      var urlComp = try self.createAuthApiUrlComponent(version: version, forAction: "search3")
+      urlComp.addQueryItem(name: "query", value: "")
+      urlComp.addQueryItem(name: "artistCount", value: 0)
+      urlComp.addQueryItem(name: "artistOffset", value: 0)
+      urlComp.addQueryItem(name: "albumCount", value: 0)
+      urlComp.addQueryItem(name: "albumOffset", value: 0)
+      urlComp.addQueryItem(name: "songCount", value: count)
+      urlComp.addQueryItem(name: "songOffset", value: offset)
+      return try self.createUrl(from: urlComp)
+    }
+  }
+
   public func requestPlaylists() async throws -> APIDataResponse {
     try await request { version in
       let urlComp = try self.createAuthApiUrlComponent(version: version, forAction: "getPlaylists")

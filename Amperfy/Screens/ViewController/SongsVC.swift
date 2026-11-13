@@ -464,6 +464,7 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
         self.change(sortType: .playCount)
         self.saveSortPreference(preference: .playCount)
         self.updateSearchResults(for: self.searchController)
+        self.syncPlayCountsInBackground()
         self.appDelegate.notificationHandler.post(
           name: .fetchControllerSortChanged,
           object: nil,
@@ -524,6 +525,23 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
     }
   }
 
+  /// Pulls every song's play count from the server, so plays on other players show up.
+  private func syncPlayCountsInBackground() {
+    guard appDelegate.storage.settings.user.isOnlineMode else { return }
+    Task { @MainActor in
+      do {
+        try await self.appDelegate.getMeta(self.account.info).librarySyncer.syncSongPlayCounts()
+      } catch {
+        self.appDelegate.eventLogger.report(
+          topic: "Songs Play Count Sync",
+          error: error,
+          displayPopup: false
+        )
+      }
+      self.updateSearchResults(for: self.searchController)
+    }
+  }
+
   private func createActionButtonMenu() -> UIMenu {
     let action = UIAction(
       title: "Download \(filterTitle)",
@@ -578,6 +596,15 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
         .syncNewestLibraryElements()
       } catch {
         self.appDelegate.eventLogger.report(topic: "Songs Newest Elements Sync", error: error)
+      }
+      do {
+        try await self.appDelegate.getMeta(self.account.info).librarySyncer.syncSongPlayCounts()
+      } catch {
+        self.appDelegate.eventLogger.report(
+          topic: "Songs Play Count Sync",
+          error: error,
+          displayPopup: false
+        )
       }
       detailHeaderView?.refresh()
       self.updateSearchResults(for: self.searchController)

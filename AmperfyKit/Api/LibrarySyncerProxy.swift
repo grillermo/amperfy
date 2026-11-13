@@ -155,6 +155,11 @@ extension LibrarySyncerProxy: LibrarySyncer {
   }
 
   @MainActor
+  func syncSongPlayCounts() async throws {
+    try await activeSyncer.syncSongPlayCounts()
+  }
+
+  @MainActor
   func syncMusicFolders() async throws {
     try await activeSyncer.syncMusicFolders()
   }

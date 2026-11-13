@@ -1400,6 +1400,12 @@ class AmpacheLibrarySyncer: CommonLibrarySyncer, LibrarySyncer {
   }
 
   @MainActor
+  func syncSongPlayCounts() async throws {
+    // Ampache play counts arrive with each song as it syncs (album, search, ...);
+    // there is no cheap paged "all songs" refresh here yet.
+  }
+
+  @MainActor
   func searchSongs(searchText: String) async throws {
     guard isSyncAllowed, !searchText.isEmpty else { return }
     os_log("Search songs via API: \"%s\"", log: log, type: .info, searchText)

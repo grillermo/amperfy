@@ -79,6 +79,11 @@ class PlayableParserDelegate: AmpacheXmlLibParser {
       playableBuffer?.year = Int(buffer) ?? 0
     case "time":
       playableBuffer?.remoteDuration = Int(buffer) ?? 0
+    case "playcount":
+      // the server's count includes plays scrobbled by every player
+      if let playCount = Int(buffer) {
+        playableBuffer?.playCount = playCount
+      }
     case "art":
       playableBuffer?.artwork = parseArtwork(urlString: buffer)
     case "size":

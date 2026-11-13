@@ -1312,6 +1312,40 @@ class SubsonicLibrarySyncer: CommonLibrarySyncer, LibrarySyncer {
   }
 
   @MainActor
+  func syncSongPlayCounts() async throws {
+    guard isSyncAllowed else { return }
+    var offset = 0
+    while !Task.isCancelled {
+      let response = try await subsonicServerApi.requestAllSongs(
+        offset: offset,
+        count: Self.maxItemCountToPollAtOnce
+      )
+      let parsedCount: Int = try await storage.async.performAndGet { asyncCompanion in
+        let accountAsync = asyncCompanion.library.getAccount(managedObjectId: self.accountObjectId)
+        let idParserDelegate = SsIDsParserDelegate(performanceMonitor: self.performanceMonitor)
+        try self.parse(
+          response: response,
+          delegate: idParserDelegate,
+          isThrowingErrorsAllowed: false
+        )
+        let prefetch = asyncCompanion.library.getElements(
+          account: accountAsync,
+          prefetchIDs: idParserDelegate.prefetchIDs
+        )
+        let parserDelegate = SsSongParserDelegate(
+          performanceMonitor: self.performanceMonitor, prefetch: prefetch, account: accountAsync,
+          library: asyncCompanion.library
+        )
+        try self.parse(response: response, delegate: parserDelegate)
+        return parserDelegate.parsedCount
+      }
+      os_log("Play counts synced for %i songs", log: log, type: .info, offset + parsedCount)
+      guard parsedCount >= Self.maxItemCountToPollAtOnce else { return }
+      offset += parsedCount
+    }
+  }
+
+  @MainActor
   func parseLyrics(relFilePath: URL) async throws -> LyricsList {
     let parserDelegate = SsLyricsParserDelegate(performanceMonitor: performanceMonitor)
     guard let absFilePath = fileManager.getAbsoluteAmperfyPath(relFilePath: relFilePath) else {

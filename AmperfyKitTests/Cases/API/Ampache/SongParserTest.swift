@@ -54,6 +54,7 @@ class SongParserTest: AbstractAmpacheTest {
     XCTAssertEqual(song.account?.serverHash, TestAccountInfo.test1ServerHash)
     XCTAssertEqual(song.account?.userHash, TestAccountInfo.test1UserHash)
     XCTAssertEqual(song.id, "115")
+    XCTAssertEqual(song.playCount, 7)
     XCTAssertEqual(song.title, "Are we going Crazy")
     XCTAssertEqual(song.artist?.account?.serverHash, TestAccountInfo.test1ServerHash)
     XCTAssertEqual(song.artist?.account?.userHash, TestAccountInfo.test1UserHash)

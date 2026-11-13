@@ -179,6 +179,8 @@ public protocol LibrarySyncer: Sendable {
   func searchAlbums(searchText: String) async throws
   @MainActor
   func searchSongs(searchText: String) async throws
+  /// Refreshes every song's metadata (play count included) from the server.
+  func syncSongPlayCounts() async throws
   @MainActor
   func syncMusicFolders() async throws
   @MainActor

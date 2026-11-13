@@ -115,6 +115,16 @@ public final class BackgroundLibrarySyncer: AbstractBackgroundLibrarySyncer, Sen
             displayPopup: false
           )
         }
+        do {
+          // plays on other players reach the server as scrobbles; pull their counts in
+          try await librarySyncer.syncSongPlayCounts()
+        } catch {
+          await self.eventLogger.report(
+            topic: "Song Play Count Background Sync",
+            error: error,
+            displayPopup: false
+          )
+        }
         notifyLibrarySongsSynced()
       }
 
