@@ -45,6 +45,7 @@ class SongsFetchedResultsControllerTest: XCTestCase {
       .duration,
       .starredDate,
       .lastPlayed,
+      .playCount,
     ]
     for sortType in sortTypes {
       let songsController = SongsFetchedResultsController(
@@ -87,6 +88,37 @@ class SongsFetchedResultsControllerTest: XCTestCase {
       .compactMap { $0.id }
       .filter { $0.hasPrefix("lastPlayed") }
     XCTAssertEqual(ids, ["lastPlayedNewest", "lastPlayedOlder", "lastPlayedNever"])
+  }
+
+  func testPlayCountSortShowsMostPlayedFirst() {
+    let few = library.createSong(account: account)
+    few.id = "playCountFew"
+    few.title = "A few"
+    few.playCount = 2
+    let most = library.createSong(account: account)
+    most.id = "playCountMost"
+    most.title = "B most"
+    most.playCount = 10
+    let never = library.createSong(account: account)
+    never.id = "playCountNever"
+    never.title = "C never"
+    // cached songs pass the controller's "exclude server deleted, uncached" filter
+    for song in [few, most, never] {
+      song.managedObject.relFilePath = "\(song.id).mp3"
+    }
+    library.saveContext()
+
+    let songsController = SongsFetchedResultsController(
+      coreDataCompanion: coreDataCompanion,
+      account: account,
+      sortType: .playCount,
+      isGroupedInAlphabeticSections: SongElementSortType.playCount.hasSectionTitles
+    )
+    songsController.fetch()
+    let ids = (songsController.fetchedObjects ?? [])
+      .compactMap { $0.id }
+      .filter { $0.hasPrefix("playCount") }
+    XCTAssertEqual(ids, ["playCountMost", "playCountFew", "playCountNever"])
   }
 
   func testTrackingControllerKeepsPersistentCache() {

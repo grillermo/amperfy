@@ -257,6 +257,8 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
       return 0.0
     case .lastPlayed:
       return 0.0
+    case .playCount:
+      return 0.0
     }
   }
 
@@ -282,6 +284,8 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
     case .starredDate:
       return nil
     case .lastPlayed:
+      return nil
+    case .playCount:
       return nil
     }
   }
@@ -453,6 +457,20 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
         )
       }
     )
+    let sortByPlayCount = UIAction(
+      title: "Play Count",
+      image: sortType == .playCount ? .check : nil,
+      handler: { _ in
+        self.change(sortType: .playCount)
+        self.saveSortPreference(preference: .playCount)
+        self.updateSearchResults(for: self.searchController)
+        self.appDelegate.notificationHandler.post(
+          name: .fetchControllerSortChanged,
+          object: nil,
+          userInfo: nil
+        )
+      }
+    )
     let sortByAddedDate = UIAction(
       title: "Date Added",
       image: sortType == .addedDate ? .check : nil,
@@ -477,6 +495,7 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
           sortByRating,
           sortByDuration,
           sortByLastPlayed,
+          sortByPlayCount,
           sortByStarredDate,
           sortByAddedDate,
         ]
@@ -486,14 +505,21 @@ class SongsVC: SingleFetchedResultsTableViewController<SongMO> {
         title: "Sort",
         image: .sort,
         options: [],
-        children: [sortByName, sortByRating, sortByDuration, sortByLastPlayed, sortByAddedDate]
+        children: [
+          sortByName,
+          sortByRating,
+          sortByDuration,
+          sortByLastPlayed,
+          sortByPlayCount,
+          sortByAddedDate,
+        ]
       )
     } else {
       return UIMenu(
         title: "Sort",
         image: .sort,
         options: [],
-        children: [sortByName, sortByRating, sortByDuration, sortByLastPlayed]
+        children: [sortByName, sortByRating, sortByDuration, sortByLastPlayed, sortByPlayCount]
       )
     }
   }

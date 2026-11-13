@@ -112,6 +112,7 @@ public enum SongElementSortType: Int, Sendable, Codable {
   case duration = 3
   case starredDate = 4
   case lastPlayed = 5
+  case playCount = 6
 
   public static let defaultValue: SongElementSortType = .name
   public static let defaultValueForFavorite: SongElementSortType = .starredDate
@@ -130,6 +131,8 @@ public enum SongElementSortType: Int, Sendable, Codable {
       return .none
     case .lastPlayed:
       return .none
+    case .playCount:
+      return .none
     }
   }
 
@@ -146,6 +149,8 @@ public enum SongElementSortType: Int, Sendable, Codable {
     case .starredDate:
       return false
     case .lastPlayed:
+      return false
+    case .playCount:
       return false
     }
   }
@@ -620,6 +625,8 @@ public class ArtistSongsItemsFetchedResultsController: BasicFetchedResultsContro
       fetchRequest = SongMO.starredDateSortedFetchRequest
     case .lastPlayed:
       fetchRequest = SongMO.lastPlayedDateSortedFetchRequest
+    case .playCount:
+      fetchRequest = SongMO.playCountSortedFetchRequest
     }
     switch self.displayFilter {
     case .all, .favorites:
@@ -773,6 +780,8 @@ public class SongsFetchedResultsController: CachedFetchedResultsController<SongM
       fetchRequest = SongMO.starredDateSortedFetchRequest
     case .lastPlayed:
       fetchRequest = SongMO.lastPlayedDateSortedFetchRequest
+    case .playCount:
+      fetchRequest = SongMO.playCountSortedFetchRequest
     }
     fetchRequest.fetchLimit = fetchLimit ?? 0
     fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [

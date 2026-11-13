@@ -195,6 +195,8 @@ class PlaylistAddSongsVC: SingleFetchedResultsTableViewController<SongMO>, Playl
       return 0.0
     case .lastPlayed:
       return 0.0
+    case .playCount:
+      return 0.0
     }
   }
 
@@ -220,6 +222,8 @@ class PlaylistAddSongsVC: SingleFetchedResultsTableViewController<SongMO>, Playl
     case .starredDate:
       return nil
     case .lastPlayed:
+      return nil
+    case .playCount:
       return nil
     }
   }

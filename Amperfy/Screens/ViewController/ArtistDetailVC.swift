@@ -251,6 +251,7 @@ class ArtistDetailVC: MultiSourceTableViewController {
       ("Rating", .rating),
       ("Duration", .duration),
       ("Recently Played", .lastPlayed),
+      ("Play Count", .playCount),
     ]
     if account.apiType.asServerApiType != .ampache {
       sortTypes.append(("Date Added", .addedDate))
