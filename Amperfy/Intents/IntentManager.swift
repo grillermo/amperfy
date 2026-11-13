@@ -382,8 +382,12 @@ public class IntentManager {
         libraryElementType: libraryElementType
       )
       Task { @MainActor in
+        var container = playableContainer
+        if container == nil, libraryElementType == .song {
+          container = await self.fetchUnknownSong(account: account, id: id)
+        }
         let playSuccess = await self.play(
-          container: playableContainer,
+          container: container,
           shuffleOption: shuffleOption,
           repeatOption: repeatOption
         )
@@ -510,6 +514,50 @@ public class IntentManager {
     )
     CallbackURLKit.register(action: "playNext") { parameters, success, failure, cancel in
       self.player.playNext()
+      success(nil)
+    }
+
+    documentation.append(
+      XCallbackActionDocu(
+        name: "SeekForward",
+        description: "Skips ahead in the playing track by the given seconds, stopping short of its end",
+        exampleURLs: [
+          "amperfy://x-callback-url/seekForward?seconds=60",
+        ],
+        action: "seekForward",
+        parameters: [
+          XCallbackActionParameterDocu(
+            name: "seconds",
+            type: "Double",
+            isMandatory: true,
+            description: "1 to 300"
+          ),
+        ]
+      )
+    )
+    CallbackURLKit.register(action: "seekForward") { parameters, success, failure, cancel in
+      guard let raw = parameters.first(where: { $0.key == "seconds" })?.value,
+            let seconds = Double(raw), seconds.isFinite, (1 ... 300).contains(seconds)
+      else {
+        failure(NSError.error(
+          code: .missingParameter,
+          failureReason: "Parameter seconds must be a number from 1 to 300."
+        ))
+        return
+      }
+      guard self.player.currentlyPlaying != nil else {
+        failure(NSError.error(
+          code: .missingErrorCode,
+          failureReason: "There is no song currently playing."
+        ))
+        return
+      }
+      let duration = self.player.duration
+      guard duration.isFinite, duration > 1 else {
+        success(nil)
+        return
+      }
+      self.player.seek(toSecond: min(self.player.elapsedTime + seconds, duration - 1))
       success(nil)
     }
 
@@ -1247,6 +1295,32 @@ public class IntentManager {
     let foundSong = foundSongs.lazy
       .filter { song in matchingArtists.contains(where: { artist in song.artist == artist }) }.first
     return foundSong
+  }
+
+  /// A song Amperfy has not loaded yet, fetched from the server by its ID.
+  ///
+  /// The initial sync covers artists and albums but not their songs, so a song
+  /// whose album was never opened is unknown here even though the server has it.
+  /// A placeholder carrying only the ID is filled by the server's answer; if the
+  /// server does not know the ID either, the placeholder is removed again.
+  func fetchUnknownSong(account: Account, id: String) async -> Song? {
+    guard storage.settings.user.isOnlineMode else { return nil }
+    let placeholder = library.createSong(account: account)
+    placeholder.id = id
+    storage.main.saveContext()
+    do {
+      try await getLibrarySyncerCB(account.info).sync(song: placeholder)
+    } catch {
+      // A failed lyrics fetch also lands here, after the song itself was filled.
+      os_log("Fetch of song %s failed: %s", log: log, type: .info, id, error.localizedDescription)
+    }
+    storage.main.context.refresh(placeholder.managedObject, mergeChanges: true)
+    if let song = library.getSong(for: account, id: id), !song.title.isEmpty {
+      return song
+    }
+    storage.main.context.delete(placeholder.managedObject)
+    storage.main.saveContext()
+    return nil
   }
 
   func getPlayableContainer(
