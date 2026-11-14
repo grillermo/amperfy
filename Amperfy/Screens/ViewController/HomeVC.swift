@@ -357,7 +357,14 @@ final class HomeVC: UICollectionViewController {
       )
       navigationController?.navigationBar.prefersLargeTitles = false
     } else if let song = playableContainer as? Song {
-      appDelegate.player.play(context: PlayContext(containable: song))
+      var context: PlayContext?
+      // the snapshot drops duplicates, so find the item's index in the section's data by its id
+      if let section = dataSource.sectionIdentifier(for: indexPath.section),
+         let itemId = dataSource.itemIdentifier(for: indexPath)?.id,
+         let index = sharedHome.data[section]?.firstIndex(where: { $0.id == itemId }) {
+        context = sharedHome.playContext(forItemAt: index, in: section)
+      }
+      appDelegate.player.play(context: context ?? PlayContext(containable: song))
     } else if let podcastEpisode = playableContainer as? PodcastEpisode,
               let podcast = podcastEpisode.podcast {
       navigationController?.pushViewController(

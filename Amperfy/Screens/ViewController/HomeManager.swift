@@ -337,6 +337,19 @@ class HomeManager: NSObject {
     }
   }
 
+  /// What tapping an item plays. A song of Recently Added Songs plays with the songs after it
+  /// queued, so playback continues down the list; anything else plays on its own.
+  func playContext(forItemAt index: Int, in section: HomeSection) -> PlayContext? {
+    guard let items = data[section], index < items.count else { return nil }
+    let selected = items[index].playableContainable
+    guard section == .recentlyAddedSongs else { return PlayContext(containable: selected) }
+    let songs = items.compactMap { $0.playableContainable as? Song }
+    guard let selectedSong = selected as? Song,
+          let songIndex = songs.firstIndex(where: { $0 === selectedSong })
+    else { return PlayContext(containable: selected) }
+    return PlayContext(name: section.title, index: songIndex, playables: songs)
+  }
+
   func updateRandomAlbums(isOfflineMode: Bool) async {
     let randomAlbums = storage.main.library.getRandomAlbums(
       for: account,
