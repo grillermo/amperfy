@@ -109,7 +109,7 @@ extension CarPlaySceneDelegate {
           case .randomSongs:
             await sharedHome.updateRandomSongs(isOfflineMode: isOfflineMode)
           case .lastTimePlayedPlaylists, .newestAlbums, .newestPodcastEpisodes, .podcasts, .radios,
-               .recentlyPlayedAlbums:
+               .recentlyPlayedAlbums, .recentlyAddedSongs:
             // do nothing
             break
           }

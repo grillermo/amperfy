@@ -351,7 +351,13 @@ public struct AccountSetting: Sendable, Codable {
   // ordered visible Home Sections
   private var _homeSections: [HomeSection] = HomeSection.defaultValue
   public var homeSections: [HomeSection] {
-    get { _homeSections.filter { !HomeSection.removedSections.contains($0) } }
+    get {
+      HomeSection.insertingIntroducedSections(
+        into: _homeSections,
+        knownSections: _homeSectionOrder ?? _homeSections
+      )
+      .filter { !HomeSection.removedSections.contains($0) }
+    }
     set { _homeSections = newValue }
   }
 
@@ -360,7 +366,8 @@ public struct AccountSetting: Sendable, Codable {
   private var _homeSectionOrder: [HomeSection]?
   public var homeSectionOrder: [HomeSection] {
     get {
-      (_homeSectionOrder ?? _homeSections)
+      let storedOrder = _homeSectionOrder ?? _homeSections
+      return HomeSection.insertingIntroducedSections(into: storedOrder, knownSections: storedOrder)
         .completingOrder(with: HomeSection.allCases)
         .filter { !HomeSection.removedSections.contains($0) }
     }

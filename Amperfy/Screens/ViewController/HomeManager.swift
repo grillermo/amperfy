@@ -79,6 +79,7 @@ class HomeManager: NSObject {
 
   private var albumsRecentlyPlayedFetchController: AlbumFetchedResultsController?
   private var albumsNewestFetchController: AlbumFetchedResultsController?
+  private var songsRecentlyAddedFetchController: SongsFetchedResultsController?
   private var playlistsLastTimePlayedFetchController: PlaylistFetchedResultsController?
   private var podcastEpisodesFetchedController: PodcastEpisodesReleaseDateFetchedResultsController?
   private var podcastsFetchedController: PodcastFetchedResultsController?
@@ -135,6 +136,30 @@ class HomeManager: NSObject {
     } else {
       albumsNewestFetchController?.delegate = nil
       albumsNewestFetchController = nil
+    }
+
+    if orderedVisibleSections.contains(where: { $0 == .recentlyAddedSongs }) {
+      songsRecentlyAddedFetchController = SongsFetchedResultsController(
+        coreDataCompanion: storage.main, account: account,
+        sortType: .addedDate,
+        isGroupedInAlphabeticSections: false,
+        fetchLimit: Self.sectionMaxItemCount
+      )
+      songsRecentlyAddedFetchController?.delegate = self
+      // the unfiltered results of a songs controller are not kept updated:
+      // a search (even without filter) keeps the section updated when songs get synced
+      songsRecentlyAddedFetchController?.search(
+        predicate: storage.main.library.getSearchSongsPredicate(
+          for: account,
+          searchText: "",
+          onlyCached: isOfflineMode,
+          displayFilter: .all
+        )
+      )
+      updateSongsRecentlyAdded()
+    } else {
+      songsRecentlyAddedFetchController?.delegate = nil
+      songsRecentlyAddedFetchController = nil
     }
 
     if orderedVisibleSections.contains(where: { $0 == .randomAlbums }) {
@@ -302,6 +327,16 @@ class HomeManager: NSObject {
     }
   }
 
+  func updateSongsRecentlyAdded() {
+    if let songs = songsRecentlyAddedFetchController?.fetchedObjects as? [SongMO] {
+      data[.recentlyAddedSongs] = songs.prefix(Self.sectionMaxItemCount)
+        .compactMap { Song(managedObject: $0) }.compactMap {
+          HomeItem(section: .recentlyAddedSongs, playableContainable: $0)
+        }
+      applySnapshotCB?()
+    }
+  }
+
   func updateRandomAlbums(isOfflineMode: Bool) async {
     let randomAlbums = storage.main.library.getRandomAlbums(
       for: account,
@@ -402,6 +437,8 @@ extension HomeManager: @preconcurrency NSFetchedResultsControllerDelegate {
         updateAlbumsRecentlyPlayed()
       } else if controller == albumsNewestFetchController?.fetchResultsController {
         updateAlbumsNewest()
+      } else if songsRecentlyAddedFetchController?.isOneOfThis(controller) ?? false {
+        updateSongsRecentlyAdded()
       } else if controller == playlistsLastTimePlayedFetchController?.fetchResultsController {
         updatePlaylistsLastTimePlayed()
       } else if controller == podcastEpisodesFetchedController?.fetchResultsController {

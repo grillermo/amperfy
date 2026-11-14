@@ -33,14 +33,22 @@ public enum HomeSection: Int, Sendable, CaseIterable, Codable {
   case randomArtists
   case randomGenres
   case randomSongs
+  case recentlyAddedSongs
 
   // sections no longer offered on the Home screen; the cases stay to keep the Int raw values consistent
   static let removedSections: Set<HomeSection> = [.randomAlbums]
+
+  // sections added after users already stored their Home settings, with the section each one
+  // follows: they are shown there until the user arranges the sections in the editor
+  static let introducedSections: [(section: HomeSection, after: HomeSection)] = [
+    (.recentlyAddedSongs, .newestAlbums),
+  ]
 
   static let defaultValue: [HomeSection] = [
     .recentlyPlayedAlbums,
     .lastTimePlayedPlaylists,
     .newestAlbums,
+    .recentlyAddedSongs,
   ]
 
   public var title: String {
@@ -55,6 +63,7 @@ public enum HomeSection: Int, Sendable, CaseIterable, Codable {
     case .randomArtists: return "Random Artists"
     case .randomGenres: return "Random Genres"
     case .randomSongs: return "Random Songs"
+    case .recentlyAddedSongs: return "Recently Added Songs"
     }
   }
 
@@ -74,6 +83,26 @@ public enum HomeSection: Int, Sendable, CaseIterable, Codable {
     case .randomArtists: return true
     case .randomGenres: return true
     case .randomSongs: return true
+    case .recentlyAddedSongs: return false
     }
+  }
+
+  /// Inserts the introduced sections missing from `knownSections` (the sections the stored settings
+  /// already knew about) after the section each one follows, or at the end if that one is absent.
+  static func insertingIntroducedSections(
+    into sections: [HomeSection],
+    knownSections: [HomeSection]
+  )
+    -> [HomeSection] {
+    var result = sections
+    for (section, anchor) in introducedSections
+      where !knownSections.contains(section) && !result.contains(section) {
+      if let anchorIndex = result.firstIndex(of: anchor) {
+        result.insert(section, at: anchorIndex + 1)
+      } else {
+        result.append(section)
+      }
+    }
+    return result
   }
 }
