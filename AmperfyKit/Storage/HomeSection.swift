@@ -34,8 +34,10 @@ public enum HomeSection: Int, Sendable, CaseIterable, Codable {
   case randomGenres
   case randomSongs
 
+  // sections no longer offered on the Home screen; the cases stay to keep the Int raw values consistent
+  static let removedSections: Set<HomeSection> = [.randomAlbums]
+
   static let defaultValue: [HomeSection] = [
-    .randomAlbums,
     .recentlyPlayedAlbums,
     .lastTimePlayedPlaylists,
     .newestAlbums,
