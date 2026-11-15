@@ -58,7 +58,7 @@ Amperfy is an iOS/iPadOS/macOS app written in Swift to interact with an [Ampache
 
 ## Fork: local builds and OTA releases
 
-- `./build-macos.sh` builds the Mac Catalyst app and installs it to `~/Applications`.
+- `./build-macos.sh` builds the Mac Catalyst app and installs it to `/Applications`.
 - `./build-ios.sh` (on the macmini) builds an ad hoc `.ipa` and publishes it over the air to
   files.chiq.me. It wraps `./deploy`; see [scripts/deploy/README.md](scripts/deploy/README.md)
   for its flags, `.env` and `Config/Local.xcconfig`.

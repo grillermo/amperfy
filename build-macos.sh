@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the Mac Catalyst app on this machine, quits the running Amperfy,
-# installs the new build to ~/Applications/Amperfy.app and launches it.
+# installs the new build to /Applications/Amperfy.app and launches it.
 #
 # Every build artifact lives in tmp/macos and is deleted when the script exits
 # (success or failure), so each run is a clean build with no cache left behind.
@@ -17,7 +17,7 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 
 APP_NAME="Amperfy"
 WORK_DIR="$ROOT/tmp/macos"
-DEST_DIR="$HOME/Applications"
+DEST_DIR="/Applications"
 DEST_APP="$DEST_DIR/$APP_NAME.app"
 
 PRODUCT="$WORK_DIR/DerivedData/Build/Products/Release-maccatalyst/$APP_NAME.app"

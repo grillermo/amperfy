@@ -403,7 +403,7 @@ puts "\n    Add it to the Home Screen once; it always installs the newest releas
 
 # --- Mac app -----------------------------------------------------------------
 
-# A release also replaces the Mac Catalyst app on this Mac (~/Applications),
+# A release also replaces the Mac Catalyst app on this Mac (/Applications),
 # built from the release commit so both apps carry the same version.
 # AMPERFY_SKIP_MACOS=1 skips it (../build sets it and runs build-macos.sh
 # itself, so the Mac app updates even when the iOS release fails).

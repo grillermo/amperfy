@@ -5,7 +5,7 @@
 #                        publishes it over the air to files.chiq.me, commits,
 #                        tags and pushes (see scripts/deploy/README.md)
 #   2. build-macos.sh -> builds the Mac Catalyst app and installs it to
-#                        ~/Applications/Amperfy.app on this Mac
+#                        /Applications/Amperfy.app on this Mac
 #
 # They run one after the other, iOS first, so the Mac app is built from the
 # release commit and carries the same version. Running them side by side would

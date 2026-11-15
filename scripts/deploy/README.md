@@ -24,7 +24,7 @@ even when the iOS release fails:
 5. commits the bump, tags it and pushes `master` to `github` (grillermo/amperfy). Never to
    `origin`, which is upstream.
 6. builds the Mac Catalyst app from the release commit and installs it to
-   `~/Applications/Amperfy.app` on this Mac (`build-macos.sh`; `AMPERFY_SKIP_MACOS=1` skips it).
+   `/Applications/Amperfy.app` on this Mac (`build-macos.sh`; `AMPERFY_SKIP_MACOS=1` skips it).
 
 Install page (stable URL, open in Safari): https://files.chiq.me/files/amperfy-install.html
 After the first install, long-press the app icon and pick **Install Latest** to update.
@@ -57,7 +57,7 @@ The SwiftFormat build phase is skipped for these builds (`AMPERFY_SKIP_SWIFTFORM
 would build swiftformat with `swift run`, which fills SwiftPM's caches in `~/Library`. What
 remains is what's in files.chiq.me: the versioned `.ipa` plus the pinned
 `amperfy-manifest.plist`, `amperfy-icon.png` and `amperfy-install.html` it needs (and the Mac app in
-`~/Applications`).
+`/Applications`).
 
 Opening the project in Xcode's GUI is different: that uses `~/Library/Developer/Xcode/DerivedData`
 and SwiftPM's shared `repositories/` cache, which these scripts never touch.
